@@ -2,9 +2,25 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<title>bm-map-posting</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ポスティング管理</title>
 </head>
 <body>
-<p>準備中です。</p>
+<p id="welcome">読み込み中...</p>
+<button id="logout-button" type="button">ログアウト</button>
+<script>
+  const SESSION_KEY = 'bm_posting_session';
+  const raw = sessionStorage.getItem(SESSION_KEY);
+  if (!raw) {
+    location.href = '/login.html';
+  } else {
+    const { user } = JSON.parse(raw);
+    document.getElementById('welcome').textContent = `ようこそ、${user.name}さん（${user.role}） - 地図画面は準備中です`;
+  }
+  document.getElementById('logout-button').addEventListener('click', () => {
+    sessionStorage.removeItem(SESSION_KEY);
+    location.href = '/login.html';
+  });
+</script>
 </body>
 </html>
