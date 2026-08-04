@@ -7,7 +7,16 @@
     "directory": "./public",
     "binding": "ASSETS",
     "run_worker_first": true
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bm-posting-db",
+      // 本番D1データベースは未作成（Cloudflare認証情報が必要なフェーズ7で対応）。
+      // ローカル開発（--local）はこのIDに関わらずSQLiteエミュレーションで動作する。
+      "database_id": "REPLACE_WITH_PRODUCTION_D1_ID"
+    }
+  ]
   // 対象地域表示名・地図初期中心座標・初期ズームレベル等の環境変数、
-  // D1バインディング、e-Stat関連のSecretsは後続フェーズで追加する。
+  // e-Stat関連のSecretsは後続フェーズで追加する。
 }
