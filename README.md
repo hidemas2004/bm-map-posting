@@ -164,21 +164,35 @@ CSVダウンロードに対応している（スプレッドシートでの目�
   無しで行えたため実質的な支障はないが、プログラムからの動的検索等でe-Stat GIS APIを
   正式に呼び出す場合は別途アプリケーションID登録が必要（登録はe-Stat利用者本人でないと
   行えないため未取得のまま）。
-- **本番環境は未構築**: D1本番データベースの作成、Secretsの設定、`wrangler deploy` はいずれも
-  実行していない（下記チェックリスト参照）。
 - 境界GeoJSON（大和市136地域で約350KB）は簡易な地図表示には十分だが、対象自治体を増やすと
   データ量が線形に増えるため、必要に応じてmapshaperの`-simplify`等での簡略化を検討する。
+- **本番の合言葉が初期シードのまま**: 2026-08-05時点、本番D1には`seed/users.sql`のテスト用
+  合言葉（`admin-pass`等）がそのまま入っている。ユーザー管理画面（`/users.html`、管理者限定）
+  から早めに変更すること。
 
-## デプロイ前チェックリスト
+## 本番環境
 
-1. `npx wrangler login` でCloudflareアカウントに認証する（2026-08-04時点、本環境では
-   blackdog.yokohama.japan@gmail.com のアカウントで認証済み）
+- URL: `https://bm-map-posting.blackdog-yokohama-japan.workers.dev`（2026-08-05にデプロイ済み）
+- D1データベース: `bm-posting-db`（`wrangler.jsonc`の`database_id`参照）
+- `SESSION_SECRET` / `AREAS_IMPORT_TOKEN` は`wrangler secret put`で設定済み
+  （値はCloudflareダッシュボード側でのみ保持。再発行する場合は`POST /api/areas/import`を
+  使う外部スクリプト側の設定も合わせて更新すること）
+
+### 再デプロイ・DB更新の手順
+
+```bash
+npx wrangler d1 execute bm-posting-db --remote --file=<マイグレーション/シードファイル>
+npx wrangler deploy
+```
+
+### 初回構築時の手順（参考。再構築が必要になった場合用）
+
+1. `npx wrangler login` でCloudflareアカウントに認証する
 2. `npx wrangler d1 create bm-posting-db` で本番D1データベースを作成し、`wrangler.jsonc` の
-   `database_id`（現在 `REPLACE_WITH_PRODUCTION_D1_ID`）を実際のIDに置き換える
+   `database_id` を実際のIDに置き換える
 3. 本番D1へマイグレーション・シードを適用する
    （`npx wrangler d1 execute bm-posting-db --remote --file=migrations/0001_init.sql`、
-   `seed/areas_yamato.sql`、`seed/users.sql` の順に `--remote` フラグを付けて適用。
-   `seed/users.sql` の合言葉は本運用前に必ず変更すること）
-4. `wrangler secret put SESSION_SECRET` 等、上記シークレットをCloudflare側に設定する
-5. 大和市以外の市区町村も対象にする場合は、「行政区域データの追加手順」に沿って追加する
-6. `npx wrangler deploy` で本番デプロイする
+   `seed/areas_yamato.sql`、`seed/users.sql` の順に `--remote` フラグを付けて適用）
+4. `wrangler secret put SESSION_SECRET` / `wrangler secret put AREAS_IMPORT_TOKEN` を設定する
+5. `npx wrangler deploy` で本番デプロイする
+6. ユーザー管理画面（`/users.html`）から`seed/users.sql`のテスト用合言葉を変更する

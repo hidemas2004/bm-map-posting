@@ -12,9 +12,8 @@
     {
       "binding": "DB",
       "database_name": "bm-posting-db",
-      // 本番D1データベースは未作成（Cloudflare認証情報が必要なフェーズ7で対応）。
       // ローカル開発（--local）はこのIDに関わらずSQLiteエミュレーションで動作する。
-      "database_id": "REPLACE_WITH_PRODUCTION_D1_ID"
+      "database_id": "d51f8de3-af32-44c2-87ea-a3d28e30bb30"
     }
   ]
   // 対象地域表示名・地図初期中心座標・初期ズームレベル等の環境変数、
