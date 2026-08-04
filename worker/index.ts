@@ -2,8 +2,9 @@ import { handleLogin, requireAdmin, requireAuth, type AuthEnv } from './auth';
 import { listActiveUsers, type UsersEnv } from './users';
 import { listAreas, type AreasEnv } from './areas';
 import { createNewTerm, getTermData, listTerms, type TermsEnv } from './terms';
+import { recordDistribution, setAssignee, type RecordsEnv } from './records';
 
-export interface Env extends AuthEnv, UsersEnv, AreasEnv, TermsEnv {
+export interface Env extends AuthEnv, UsersEnv, AreasEnv, TermsEnv, RecordsEnv {
 	ASSETS: { fetch(request: Request): Promise<Response> };
 }
 
@@ -45,6 +46,12 @@ export default {
 				}
 				const body = await request.json<{ term_name?: string }>().catch(() => ({}));
 				return createNewTerm(env, String(body.term_name ?? ''));
+			}
+			if (url.pathname === '/api/record' && request.method === 'POST') {
+				return recordDistribution(request, env, user);
+			}
+			if (url.pathname === '/api/assignee' && request.method === 'POST') {
+				return setAssignee(request, env);
 			}
 
 			return Response.json({ error: 'Not Found' }, { status: 404 });
