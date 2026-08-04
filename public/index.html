@@ -4,23 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ポスティング管理</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<p id="welcome">読み込み中...</p>
-<button id="logout-button" type="button">ログアウト</button>
-<script>
-  const SESSION_KEY = 'bm_posting_session';
-  const raw = sessionStorage.getItem(SESSION_KEY);
-  if (!raw) {
-    location.href = '/login.html';
-  } else {
-    const { user } = JSON.parse(raw);
-    document.getElementById('welcome').textContent = `ようこそ、${user.name}さん（${user.role}） - 地図画面は準備中です`;
-  }
-  document.getElementById('logout-button').addEventListener('click', () => {
-    sessionStorage.removeItem(SESSION_KEY);
-    location.href = '/login.html';
-  });
-</script>
+<header id="header">
+  <select id="term-select"></select>
+  <h1>ポスティング管理 <span id="view-only-badge">閲覧専用</span></h1>
+  <div style="display:flex; gap:6px;">
+    <button id="gps-button" type="button" title="現在地">📍</button>
+    <button id="menu-button" type="button" title="メニュー">&#8801;</button>
+  </div>
+</header>
+<div id="menu-panel">
+  <button id="new-term-button" type="button" style="display:none;">新ターム開始</button>
+  <button id="logout-button" type="button">ログアウト</button>
+</div>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="/config.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>
