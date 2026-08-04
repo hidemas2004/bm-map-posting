@@ -67,7 +67,7 @@ async function main() {
 	meta.displayName = meta.displayName ?? (await ask('表示名（例: 平塚市）'));
 	meta.cityName =
 		meta.cityName ?? (await ask('e-StatのCITY_NAME（通常は表示名と同じ。政令指定都市の区は「横浜市鶴見区」のように）', { defaultValue: meta.displayName }));
-	meta.prefCode = meta.prefCode ?? (await ask('都道府県コード', { defaultValue: '14' }));
+	meta.cityCode = meta.cityCode ?? (await ask('市区町村コード（総務省「全国地方公共団体コード」の5桁。政令指定都市の区は区ごとに別コード）'));
 	writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
 	// --- 境界データ・地域マスタの収集 ---
@@ -82,20 +82,20 @@ async function main() {
 		const autoFetch = await confirm('e-Statから自動取得しますか？（ネットワーク到達性が必要）', { defaultValue: true });
 		if (autoFetch) {
 			try {
-				const result = fetchCityBoundary({ prefCode: meta.prefCode, cityName: meta.cityName, outDir: dir });
+				const result = fetchCityBoundary({ cityCode: meta.cityCode, cityName: meta.cityName, outDir: dir });
 				warnings = result.warnings;
 				console.log(`\n${result.areas.length}件の地域を取得しました。`);
 			} catch (err) {
 				console.error(`\n自動取得に失敗しました: ${err.message}`);
 				console.log(
-					'README.md の「行政区域データの追加・丁目単位への格上げ手順」を参照し、手動で\n' +
+					'README.md の「行政区域データの追加・基本単位区単位への格上げ手順」を参照し、手動で\n' +
 						`  regions/${regionId}/areas.sql\n  regions/${regionId}/boundary.geojson\n` +
 						'を用意してください（大和市と同じ手順。到達可能な環境で実行するか、ccに依頼できます）。',
 				);
 			}
 		} else {
 			console.log(
-				`README.md の「行政区域データの追加・丁目単位への格上げ手順」を参照し、\n` +
+				`README.md の「行政区域データの追加・基本単位区単位への格上げ手順」を参照し、\n` +
 					`  regions/${regionId}/areas.sql\n  regions/${regionId}/boundary.geojson\n` +
 					'を手動で用意してください。',
 			);
@@ -177,6 +177,7 @@ async function main() {
 	if (!meta.dbSeeded) {
 		console.log('\n--- D1へのマイグレーション・データ投入 ---');
 		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0001_init.sql']);
+		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0002_areas_block_level.sql']);
 		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${path.relative(REPO_ROOT, areasSqlPath)}`]);
 
 		// 合言葉が平文で入るSQLはリポジトリ外（OS一時ディレクトリ）に書き、投入後に必ず削除する。

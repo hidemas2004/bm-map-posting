@@ -13,6 +13,7 @@ interface ActivityLogRow {
 	ward: string;
 	town: string;
 	chome: string;
+	block: string;
 	updated_at: string;
 	user_id: string;
 	user_name: string;
@@ -21,7 +22,7 @@ interface ActivityLogRow {
 
 const LIST_QUERY = `
 	SELECT activity_log.log_id, activity_log.term_id, terms.term_name, activity_log.area_id,
-		areas.city, areas.ward, areas.town, areas.chome,
+		areas.city, areas.ward, areas.town, areas.chome, areas.block,
 		activity_log.updated_at, activity_log.user_id, activity_log.user_name, activity_log.delta
 	FROM activity_log
 	JOIN terms ON terms.term_id = activity_log.term_id
@@ -42,7 +43,7 @@ export async function listActivityLog(env: ActivityLogEnv, termId: string | null
 export async function exportActivityLogCsv(env: ActivityLogEnv, termId: string | null): Promise<Response> {
 	const rows = await queryActivityLog(env, termId);
 	const csv = toCsv(
-		['log_id', '記録日時', 'ターム', 'area_id', '市区町村', '区', '町丁目', '丁目', '担当者ID', '担当者名', '増減枚数'],
+		['log_id', '記録日時', 'ターム', 'area_id', '市区町村', '区', '町丁目', '丁目', '区画', '担当者ID', '担当者名', '増減枚数'],
 		rows.map((r) => [
 			r.log_id,
 			r.updated_at,
@@ -52,6 +53,7 @@ export async function exportActivityLogCsv(env: ActivityLogEnv, termId: string |
 			r.ward,
 			r.town,
 			r.chome,
+			r.block,
 			r.user_id,
 			r.user_name,
 			r.delta,

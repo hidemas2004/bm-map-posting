@@ -43,6 +43,7 @@ function areaTitle(row) {
 	if (row.ward) title += ` ${row.ward}`;
 	if (row.town) title += ` ${row.town}`;
 	if (row.chome) title += `${row.chome}丁目`;
+	if (row.block) title += ` ${row.block}区画`;
 	return title;
 }
 
@@ -54,6 +55,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 let geoLayer = null;
+let chomeLayer = null;
 
 function weightForZoom(baseWeight) {
 	const zoomDiff = map.getZoom() - MAP_INITIAL_ZOOM;
@@ -73,7 +75,6 @@ function styleForArea(areaId) {
 		return {
 			color: UNASSIGNED_BOUNDARY_COLOR,
 			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
-			dashArray: UNASSIGNED_DASH_ARRAY,
 			fillOpacity: 0,
 		};
 	}
@@ -101,7 +102,6 @@ function styleForArea(areaId) {
 		return {
 			color: UNASSIGNED_BOUNDARY_COLOR,
 			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
-			dashArray: UNASSIGNED_DASH_ARRAY,
 			fillOpacity: 0,
 		};
 	}
@@ -118,6 +118,7 @@ function styleForArea(areaId) {
 function redrawStyles() {
 	if (!geoLayer) return;
 	geoLayer.eachLayer((layer) => layer.setStyle(styleForArea(layer.feature.properties.area_id)));
+	if (chomeLayer) chomeLayer.setStyle({ weight: weightForZoom(CHOME_BOUNDARY_WEIGHT) });
 }
 
 map.on('zoomend', redrawStyles);
@@ -181,6 +182,20 @@ async function loadBoundary() {
 	}).addTo(map);
 }
 
+/** 丁目単位の境界線を表示専用（太め・別色、クリック不可）で基本単位区レイヤーの上に重ねる。 */
+async function loadChomeBoundary() {
+	const res = await fetch(CHOME_BOUNDARY_GEOJSON_PATH);
+	const geojson = await res.json();
+	chomeLayer = L.geoJSON(geojson, {
+		interactive: false,
+		style: () => ({
+			color: CHOME_BOUNDARY_COLOR,
+			weight: weightForZoom(CHOME_BOUNDARY_WEIGHT),
+			fill: false,
+		}),
+	}).addTo(map);
+}
+
 // ---- ポップアップ ----
 // ポップアップ内のボタン/セレクト操作がクリックとして地図側に伝播すると、Leafletの
 // 「ポップアップ外クリックで自動クローズ」機構が反応して閉じてしまうため、
@@ -196,7 +211,7 @@ function openPopup(layer) {
 function buildNoDataPopup(props) {
 	const div = document.createElement('div');
 	div.className = 'popup-content';
-	div.innerHTML = `<div class="title">${props.city} ${props.ward}</div>
+	div.innerHTML = `<div class="title">${areaTitle(props)}</div>
 		<p>選択中のタームにこのエリアのデータがありません。</p>`;
 	L.DomEvent.disableClickPropagation(div);
 	return div;
@@ -461,6 +476,7 @@ async function init() {
 	state.activeUsers = await usersRes.json();
 	populateAssigneeFilterSelect();
 	await loadBoundary();
+	await loadChomeBoundary();
 	await loadTerms();
 }
 

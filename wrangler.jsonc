@@ -15,7 +15,19 @@
       // ローカル開発（--local）はこのIDに関わらずSQLiteエミュレーションで動作する。
       "database_id": "d51f8de3-af32-44c2-87ea-a3d28e30bb30"
     }
-  ]
+  ],
+  "env": {
+    "staging": {
+      "name": "bm-map-posting-staging",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bm-posting-db-staging",
+          "database_id": "972ced08-252f-46f2-b143-040ada84c6b0"
+        }
+      ]
+    }
+  }
   // 対象地域表示名・地図初期中心座標・初期ズームレベル等の環境変数、
   // e-Stat関連のSecretsは後続フェーズで追加する。
 }

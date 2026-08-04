@@ -10,7 +10,7 @@ export async function listTerms(env: TermsEnv): Promise<Response> {
 export async function getTermData(env: TermsEnv, termId: string): Promise<Response> {
 	const { results } = await env.DB.prepare(
 		`SELECT
-			areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.num_households,
+			areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.block, areas.num_households,
 			term_data.assignee_id, term_data.assignee_name, term_data.distributed_total,
 			term_data.distribution_rate, term_data.last_updated_at
 		FROM term_data

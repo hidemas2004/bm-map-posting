@@ -23,7 +23,7 @@ async function apiFetch(path, options = {}) {
 	return res;
 }
 
-const BASE_HEADERS = ['area_id', '市区町村', '区', '町丁目', '丁目', '世帯数'];
+const BASE_HEADERS = ['area_id', '市区町村', '区', '町丁目', '丁目', '区画', '世帯数'];
 const FROZEN_COL_COUNT = BASE_HEADERS.length; // area_id〜世帯数までを列固定
 
 /**
@@ -71,6 +71,7 @@ function buildDataRow(area) {
 	addCell(tr, area.ward, 'td');
 	addCell(tr, area.town, 'td');
 	addCell(tr, area.chome, 'td');
+	addCell(tr, area.block, 'td');
 	addCell(tr, area.num_households.toLocaleString('ja-JP'), 'td');
 	for (const t of area.terms) {
 		addCell(tr, t.distributed_total.toLocaleString('ja-JP'), 'td');

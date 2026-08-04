@@ -28,6 +28,7 @@ function areaLabel(row) {
 	if (row.ward) label += ` ${row.ward}`;
 	if (row.town) label += ` ${row.town}`;
 	if (row.chome) label += `${row.chome}丁目`;
+	if (row.block) label += ` ${row.block}区画`;
 	return label;
 }
 
