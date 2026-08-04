@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ポスティング管理 地域マスタ一覧</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="list-page">
+<header id="header">
+  <div class="header-row">
+    <h1>地域マスタ一覧</h1>
+    <div class="header-actions">
+      <a href="/" id="back-link">地図に戻る</a>
+    </div>
+  </div>
+</header>
+<main class="list-main">
+  <div class="list-toolbar">
+    <span id="area-count"></span>
+    <button id="csv-download-button" type="button">CSVダウンロード</button>
+  </div>
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead id="areas-thead"></thead>
+      <tbody id="areas-tbody"></tbody>
+    </table>
+  </div>
+</main>
+<script src="/areas.js"></script>
+</body>
+</html>

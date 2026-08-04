@@ -17,9 +17,16 @@
   将来の認証方式変更や `bm-map-streetad` との統合時もこのファイルの中身を差し替えるだけでよい。
   セッションはHMAC署名付きの自己完結トークンをフロント側の `sessionStorage` に保持し、
   `Authorization: Bearer` ヘッダで送信する（サーバー側にセッションストアを持たない）。
-- 境界データは `public/data/boundary.geojson`。横浜市18区分の行政区域境界（`niiyz/JapanCityGeoJson`
-  由来、区単位）を同梱している。**e-Stat標準地域コード（丁目単位・11桁）への格上げは未実施**
-  （下記「既知の制約」参照）。
+- 境界データは `public/data/boundary.geojson`。現状は大和市136地域（丁目単位）のみを収録。
+  e-Stat（令和2年国勢調査 小地域境界データ）由来の正式データで、`area_id` はe-Stat標準地域コード
+  （11桁）、世帯数も概算ではなく国勢調査の実数。他市区町村を追加する場合は下記
+  「行政区域データの追加手順」を参照。
+- 地図画面（`public/index.html` / `app.js`）のヘッダは選択タームの全体集計（世帯数・配布数・
+  配布率）と担当者フィルタ（`(全体表示)` / `(担当者未決)` / 各担当者）を表示する。担当者フィルタで
+  選択中以外のエリアは濃い灰色でマスクされる。世帯数0のエリア（2026-08-04時点で2地域）は
+  ゼロ除算を避けるため担当者設定・配布記録の対象外とし、常時グレー表示（フロント・
+  バックエンド`worker/records.ts`の両方でガード）。ヘッダはクリック（select/button以外の部分）
+  で開閉でき、地図は`flexbox`レイアウトで残り領域を自動的に埋める。
 
 ## コマンド
 
@@ -33,7 +40,7 @@ npx wrangler deploy   # 本番デプロイ（要 Cloudflare 認証・D1本番デ
 
 ```bash
 npx wrangler d1 execute bm-posting-db --local --file=migrations/0001_init.sql
-npx wrangler d1 execute bm-posting-db --local --file=seed/areas_yokohama.sql
+npx wrangler d1 execute bm-posting-db --local --file=seed/areas_yamato.sql
 npx wrangler d1 execute bm-posting-db --local --file=seed/users.sql
 ```
 
@@ -45,35 +52,115 @@ npx wrangler d1 execute bm-posting-db --local --file=seed/users.sql
 | 変数名 | 用途 |
 |---|---|
 | `SESSION_SECRET` | ログインセッショントークンの署名鍵 |
-| `AREAS_IMPORT_TOKEN` | 地域マスタ一括投入API（`POST /api/areas/import`、未実装）用の保護トークン |
+| `AREAS_IMPORT_TOKEN` | 地域マスタ一括投入API（`POST /api/areas/import`）用の保護トークン |
 | `ESTAT_APP_ID` | e-Stat GIS APIのアプリケーションID（丁目単位境界データ取得用。現状未使用） |
+
+## API: 地域マスタ一括投入（POST /api/areas/import）
+
+外部スクリプト等からの投入を想定した専用API。通常のユーザーログイン（セッション認証）とは
+別系統で、`X-Import-Token` ヘッダを `AREAS_IMPORT_TOKEN` と照合して認可する。
+
+```bash
+curl -X POST https://<デプロイ先ホスト>/api/areas/import \
+  -H "X-Import-Token: <AREAS_IMPORT_TOKENの値>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "areas": [
+      { "area_id": "14213001001", "city": "大和市", "ward": "",
+        "town": "中央林間", "chome": "1", "num_households": 1408 }
+    ]
+  }'
+```
+
+- `area_id` が既存なら上書き（UPSERT）、なければ新規追加。
+- 進行中タームがある場合、新規追加された area の `term_data` 行をゼロクリア状態で自動補完する
+  （既存 area_id の `term_data`・実績値は変更しない）。
+- `area_id` / `city` / `num_households`（数値）は必須。`ward`（区を持たない市区町村では空文字）/
+  `town` / `chome` は省略可。
+
+## 履歴・地域マスタの閲覧とCSVエクスポート
+
+配布実績の変更履歴（`activity_log`）と地域マスタ（`areas`）は、それぞれ画面上での一覧表示に加え、
+CSVダウンロードに対応している（スプレッドシートでの目視確認・手元バックアップ用途を想定）。
+
+- **`public/history.html`**（メニューの「履歴一覧」）: いつ・誰が・どのエリアで何枚増減したかの
+  時系列ログ。タームで絞り込み可能。`GET /api/activity-log?term_id=<id>`（`term_id`省略で全ターム）
+  と `GET /api/activity-log/export?term_id=<id>`（同内容のCSV）。
+- **`public/areas.html`**（メニューの「地域マスタ一覧」）: `area_id`・市区町村・町丁目・世帯数に加え、
+  **直近5タームぶんの配布数・配布率**を横持ちの列として表示（`GET /api/areas/with-terms`）。
+  対象タームが増減しても列は自動で追従する。CSVエクスポート（`GET /api/areas/export`）も同じ列構成。
+  単純な地域一覧だけが欲しい場合は従来通り `GET /api/areas`（term列なし）も残してある。
+- CSVはUTF-8 BOM付き・CRLF改行（Excelでの文字化け対策）。ダウンロードはセッショントークンを
+  `Authorization`ヘッダで送る必要があるため、単純な`<a href>`ではなく`fetch`→Blob→
+  `URL.createObjectURL`で実装している（`public/history.js` / `public/areas.js`）。
+- 上記いずれもセッション認証必須（管理者に限らず全ログインユーザーが閲覧可）。
+- **未対応**: データの直接編集・削除（記録の取消のみなら、逆方向deltaを`POST /api/record`で
+  追記すれば実質的に補正できるが、それを行うUIはまだ無い）。
+
+## 行政区域データの追加・丁目単位への格上げ手順
+
+大和市（`seed/areas_yamato.sql`）は以下の手順で追加した。新しい市区町村を追加する場合も
+同じ手順で行える（神奈川県内であれば、手順1でダウンロードしたファイルは他市区町村でも
+使い回せる＝都道府県単位でまとめて配布されているため）。
+
+1. **境界データのダウンロード**（API key・利用者登録不要。ダウンロードのみなら
+   `ESTAT_APP_ID` は不要で、e-Statのページ操作をURLで代替しているだけ）:
+   ```bash
+   curl -L -o pref14.zip \
+     "https://www.e-stat.go.jp/gis/statmap-search/data?dlserveyId=A002005212020&code=14&coordSys=1&format=shape&downloadType=5&datum=2011"
+   # dlserveyId=A002005212020: 令和2年国勢調査 小地域(町丁・字等)境界データ
+   # code: 都道府県コード2桁（神奈川県=14）。この1ファイルに県内全市区町村分が入っている
+   unzip pref14.zip -d extracted   # r2ka14.shp / .dbf / .shx / .prj が展開される
+   ```
+2. **GeoJSONへ変換**（`npx mapshaper` を使用。ビルド不要、都度npxで取得可能）:
+   ```bash
+   npx mapshaper -i extracted/r2ka14.shp -o format=geojson pref14.geojson
+   ```
+3. **対象市区町村を抽出・整形**（`CITY_NAME` プロパティで絞り込み）。属性の対応:
+   - `KEY_CODE`（11桁）→ `area_id`（そのまま使える。e-Stat標準地域コード）
+   - `S_NAME`（例: `中央林間一丁目`）→ `town` + `chome` に分割（末尾の漢数字+`丁目`を
+     算用数字に変換。政令指定都市（横浜市・川崎市・相模原市）は `CITY_NAME` が
+     `川崎市多摩区` のように市区一体で入っているため `city`/`ward` に分割が必要。
+     それ以外の市（大和市・平塚市等）は区を持たないため `ward` は空文字でよい）
+   - `SETAI`（世帯数）→ `num_households`（国勢調査の実数）
+   - **注意**: 河川・鉄道等で分断された飛び地は同一 `KEY_CODE` で複数ポリゴンに分かれて
+     いることがある（大和市で2件発生）。`area_id` はDB側でPRIMARY KEYのため、
+     世帯数を合算し、ジオメトリはMultiPolygonとして1レコードにマージする必要がある。
+4. **投入**: 整形したデータを `POST /api/areas/import` へPOST（本APIの仕様は下記参照）。
+   併せて `seed/areas_<市区町村名>.sql` としてSQLも保存しておくと、DBを作り直しても
+   再現できる。
+5. **境界GeoJSONへのマージ**: 抽出したfeatureを `public/data/boundary.geojson` の
+   `features` 配列に追記する（`area_id` の重複がないことを確認）。
 
 ## 既知の制約・今後の作業
 
-- **境界データが区単位**: `areas` テーブルおよび `public/data/boundary.geojson` は横浜市18区分
-  （区単位）のプレースホルダデータ。世帯数は概算値であり、正式なデータではない。実データは
-  ポスティング業者サイト等から正式に入手して差し替える前提（指示書に明記の通り）。
-  丁目単位（e-Stat標準地域コード）へ格上げする場合は、`areas` テーブルの再シードと
-  `boundary.geojson` の差し替えが必要（`area_id` の桁数・採番方式が変わる点に注意）。
-- **e-Stat連携は未実施**: 本リポジトリを構築した開発環境は `e-stat.go.jp` への外部通信が
-  ネットワークポリシーにより遮断されており、e-Stat GIS APIの疎通確認自体ができなかった
-  （`ESTAT_APP_ID` の有無に関わらず接続不可）。到達可能な環境で `ESTAT_APP_ID` を取得のうえ、
-  改めて取得・正規化（同一自治体内の複数ポリゴンが単一Polygonの多重リングとして表現されている
-  場合の分割処理を含む）を行う必要がある。
-- **`POST /api/areas/import`（地域マスタ一括投入）は未実装**。現状はシードSQLで代用している。
+- **対象地域は大和市のみ**: 横浜市の区単位プレースホルダデータは削除済み（世帯数が概算で
+  正式なものではなかったため）。他市区町村を追加する場合は上記「行政区域データの追加手順」
+  に沿って、大和市と同様にe-Stat由来の丁目単位の正式データとして追加する。
+- **世帯数0の地域がある**: 大和市のうち2地域（`14213002101` 下鶴間一丁目、`14213036007`
+  中央林間西七丁目。商業地・工業地等と思われる）は世帯数が0。配布率計算がゼロ除算になる
+  問題があったため、これらの地域は担当者設定・配布記録の対象外とし（`POST /api/assignee` /
+  `POST /api/record` をバックエンドで拒否）、地図上も常時グレーで固定表示している
+  （`worker/records.ts`、`public/app.js` の `styleForArea`）。
+- **e-Stat GIS APIの`ESTAT_APP_ID`は未取得**: 上記の境界データダウンロードは`ESTAT_APP_ID`
+  無しで行えたため実質的な支障はないが、プログラムからの動的検索等でe-Stat GIS APIを
+  正式に呼び出す場合は別途アプリケーションID登録が必要（登録はe-Stat利用者本人でないと
+  行えないため未取得のまま）。
 - **本番環境は未構築**: D1本番データベースの作成、Secretsの設定、`wrangler deploy` はいずれも
   実行していない（下記チェックリスト参照）。
-- 境界GeoJSON（約860KB）は簡易な地図表示には十分だが、丁目単位に格上げするとデータ量が
-  大きく増える見込みのため、必要に応じてmapshaper等での簡略化を検討する。
+- 境界GeoJSON（大和市136地域で約350KB）は簡易な地図表示には十分だが、対象自治体を増やすと
+  データ量が線形に増えるため、必要に応じてmapshaperの`-simplify`等での簡略化を検討する。
 
 ## デプロイ前チェックリスト
 
-1. `npx wrangler login` でCloudflareアカウントに認証する
+1. `npx wrangler login` でCloudflareアカウントに認証する（2026-08-04時点、本環境では
+   blackdog.yokohama.japan@gmail.com のアカウントで認証済み）
 2. `npx wrangler d1 create bm-posting-db` で本番D1データベースを作成し、`wrangler.jsonc` の
    `database_id`（現在 `REPLACE_WITH_PRODUCTION_D1_ID`）を実際のIDに置き換える
 3. 本番D1へマイグレーション・シードを適用する
-   （`npx wrangler d1 execute bm-posting-db --remote --file=migrations/0001_init.sql` 等。
+   （`npx wrangler d1 execute bm-posting-db --remote --file=migrations/0001_init.sql`、
+   `seed/areas_yamato.sql`、`seed/users.sql` の順に `--remote` フラグを付けて適用。
    `seed/users.sql` の合言葉は本運用前に必ず変更すること）
 4. `wrangler secret put SESSION_SECRET` 等、上記シークレットをCloudflare側に設定する
-5. 実際の地域データ（世帯数・境界GeoJSON）を正式なものに差し替える
+5. 大和市以外の市区町村も対象にする場合は、「行政区域データの追加手順」に沿って追加する
 6. `npx wrangler deploy` で本番デプロイする

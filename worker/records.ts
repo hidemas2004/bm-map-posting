@@ -16,7 +16,9 @@ interface TermDataRow {
 }
 
 export async function recordDistribution(request: Request, env: RecordsEnv, user: SessionUser): Promise<Response> {
-	const body = await request.json<{ term_id?: number; area_id?: string; delta?: number }>().catch(() => ({}));
+	const body = await request
+		.json<{ term_id?: number; area_id?: string; delta?: number }>()
+		.catch(() => ({}) as { term_id?: number; area_id?: string; delta?: number });
 	const termId = Number(body.term_id);
 	const areaId = String(body.area_id ?? '');
 	const delta = Number(body.delta);
@@ -36,10 +38,16 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	if (!row) {
 		return Response.json({ error: '指定されたターム・エリアの組み合わせが見つかりません' }, { status: 404 });
 	}
+	if (row.num_households === 0) {
+		return Response.json({ error: '世帯数が0のためこのエリアは配布記録の対象外です' }, { status: 400 });
+	}
 
 	const newTotal = row.distributed_total + delta;
 	if (newTotal < 0) {
 		return Response.json({ error: '配布枚数がマイナスになります' }, { status: 400 });
+	}
+	if (newTotal > row.num_households) {
+		return Response.json({ error: '累計が世帯数を超えています' }, { status: 400 });
 	}
 
 	const now = new Date().toISOString();
@@ -73,13 +81,23 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 export async function setAssignee(request: Request, env: RecordsEnv): Promise<Response> {
 	const body = await request
 		.json<{ term_id?: number; area_id?: string; assignee_id?: string | null }>()
-		.catch(() => ({}));
+		.catch(() => ({}) as { term_id?: number; area_id?: string; assignee_id?: string | null });
 	const termId = Number(body.term_id);
 	const areaId = String(body.area_id ?? '');
 	const assigneeId = body.assignee_id ?? null;
 
 	if (!termId || !areaId) {
 		return Response.json({ error: 'term_id, area_id を指定してください' }, { status: 400 });
+	}
+
+	const area = await env.DB.prepare('SELECT num_households FROM areas WHERE area_id = ?')
+		.bind(areaId)
+		.first<{ num_households: number }>();
+	if (!area) {
+		return Response.json({ error: '指定されたエリアが見つかりません' }, { status: 404 });
+	}
+	if (area.num_households === 0) {
+		return Response.json({ error: '世帯数が0のためこのエリアには担当者を設定できません' }, { status: 400 });
 	}
 
 	let assigneeName = '';

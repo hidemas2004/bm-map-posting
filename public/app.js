@@ -15,6 +15,7 @@ const state = {
 	activeUsers: [],
 	watchId: null,
 	gpsMarker: null,
+	assigneeFilter: '', // ''=全体表示、UNASSIGNED_FILTER_VALUE=担当者未決、それ以外はuser_id
 };
 
 async function apiFetch(path, options = {}) {
@@ -38,7 +39,8 @@ function currentTerm() {
 }
 
 function areaTitle(row) {
-	let title = `${row.city} ${row.ward}`;
+	let title = row.city;
+	if (row.ward) title += ` ${row.ward}`;
 	if (row.town) title += ` ${row.town}`;
 	if (row.chome) title += `${row.chome}丁目`;
 	return title;
@@ -53,20 +55,61 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 let geoLayer = null;
 
+function weightForZoom(baseWeight) {
+	const zoomDiff = map.getZoom() - MAP_INITIAL_ZOOM;
+	return Math.max(MIN_BOUNDARY_WEIGHT, baseWeight + zoomDiff * ZOOM_WEIGHT_FACTOR);
+}
+
+/** 担当者フィルタ選択中の行が「ハイライト対象（＝グレーアウトしない）」かどうか */
+function matchesAssigneeFilter(row, filter) {
+	if (!filter) return true; // 全体表示＝フィルタなし
+	if (filter === UNASSIGNED_FILTER_VALUE) return !row.assignee_id;
+	return row.assignee_id === filter;
+}
+
 function styleForArea(areaId) {
 	const row = state.termDataByAreaId.get(areaId);
-	if (!row || !row.assignee_id) {
+	if (!row) {
 		return {
 			color: UNASSIGNED_BOUNDARY_COLOR,
-			weight: UNASSIGNED_BOUNDARY_WEIGHT,
+			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
 			dashArray: UNASSIGNED_DASH_ARRAY,
 			fillOpacity: 0,
 		};
 	}
-	const opacity = Math.min(row.distribution_rate / RATE_FOR_MAX_OPACITY, 1.0) * MAX_FILL_OPACITY;
+
+	// 世帯数0のエリアは担当者設定・配布記録の対象外。フィルタ状態に関わらず常にグレー固定。
+	if (row.num_households === 0) {
+		return {
+			color: UNASSIGNED_BOUNDARY_COLOR,
+			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
+			fillColor: ZERO_HOUSEHOLD_FILL_COLOR,
+			fillOpacity: ZERO_HOUSEHOLD_FILL_OPACITY,
+		};
+	}
+
+	if (!matchesAssigneeFilter(row, state.assigneeFilter)) {
+		return {
+			color: UNASSIGNED_BOUNDARY_COLOR,
+			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
+			fillColor: MASKED_FILL_COLOR,
+			fillOpacity: MASKED_FILL_OPACITY,
+		};
+	}
+
+	if (!row.assignee_id) {
+		return {
+			color: UNASSIGNED_BOUNDARY_COLOR,
+			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
+			dashArray: UNASSIGNED_DASH_ARRAY,
+			fillOpacity: 0,
+		};
+	}
+	const progress = Math.min(row.distribution_rate / RATE_FOR_MAX_OPACITY, 1.0);
+	const opacity = MIN_FILL_OPACITY + (MAX_FILL_OPACITY - MIN_FILL_OPACITY) * progress;
 	return {
 		color: ASSIGNED_BOUNDARY_COLOR,
-		weight: 1.5,
+		weight: weightForZoom(ASSIGNED_BOUNDARY_WEIGHT),
 		fillColor: ASSIGNED_FILL_COLOR,
 		fillOpacity: opacity,
 	};
@@ -76,6 +119,56 @@ function redrawStyles() {
 	if (!geoLayer) return;
 	geoLayer.eachLayer((layer) => layer.setStyle(styleForArea(layer.feature.properties.area_id)));
 }
+
+map.on('zoomend', redrawStyles);
+
+/** ヘッダの世帯数・配布数・配布率を、現在の担当者フィルタに応じて集計・表示する。 */
+function updateHeaderStats() {
+	let households = 0;
+	let distributed = 0;
+
+	if (state.assigneeFilter !== UNASSIGNED_FILTER_VALUE) {
+		for (const row of state.termDataByAreaId.values()) {
+			if (!matchesAssigneeFilter(row, state.assigneeFilter)) continue;
+			households += row.num_households;
+			distributed += row.distributed_total;
+		}
+	}
+	// 「(担当者未決)」選択時は要件により明示的に0/0/0%固定（householdsは0のまま）
+
+	const rate = households > 0 ? (distributed / households) * 100 : 0;
+	document.getElementById('stat-households').textContent = households.toLocaleString('ja-JP');
+	document.getElementById('stat-distributed').textContent = distributed.toLocaleString('ja-JP');
+	document.getElementById('stat-rate').textContent = `${rate.toFixed(1)}%`;
+}
+
+function populateAssigneeFilterSelect() {
+	const select = document.getElementById('assignee-filter');
+	select.innerHTML = '';
+
+	const optAll = document.createElement('option');
+	optAll.value = '';
+	optAll.textContent = '(全体表示)';
+	select.appendChild(optAll);
+
+	const optUnassigned = document.createElement('option');
+	optUnassigned.value = UNASSIGNED_FILTER_VALUE;
+	optUnassigned.textContent = '(担当者未決)';
+	select.appendChild(optUnassigned);
+
+	for (const user of state.activeUsers) {
+		const option = document.createElement('option');
+		option.value = user.user_id;
+		option.textContent = user.name;
+		select.appendChild(option);
+	}
+}
+
+document.getElementById('assignee-filter').addEventListener('change', (e) => {
+	state.assigneeFilter = e.target.value;
+	redrawStyles();
+	updateHeaderStats();
+});
 
 async function loadBoundary() {
 	const res = await fetch(BOUNDARY_GEOJSON_PATH);
@@ -114,6 +207,8 @@ function buildPopupContent(row, layer) {
 	container.className = 'popup-content';
 	L.DomEvent.disableClickPropagation(container);
 
+	const isZeroHousehold = row.num_households === 0;
+	const canEditAssignee = !state.viewOnly && !isZeroHousehold;
 	const rateDisplay = row.distribution_rate.toFixed(1);
 	const barWidth = Math.min(row.distribution_rate, 100);
 
@@ -121,8 +216,9 @@ function buildPopupContent(row, layer) {
 		<div class="title">${areaTitle(row)}</div>
 		<div class="assignee-row">
 			<span>担当者: ${row.assignee_name || '未担当'}</span>
-			${state.viewOnly ? '' : '<button type="button" data-action="edit-assignee">変更する</button>'}
+			${canEditAssignee ? '<button type="button" data-action="edit-assignee">変更する</button>' : ''}
 		</div>
+		${isZeroHousehold ? '<p class="zero-household-note">世帯数が0のため、担当者設定・配布記録の対象外です。</p>' : ''}
 		<div class="row"><span>世帯数:</span><span>${row.num_households.toLocaleString('ja-JP')} 世帯</span></div>
 		<div class="row"><span>累計配布:</span><span>${row.distributed_total.toLocaleString('ja-JP')} 枚</span></div>
 		<div class="row"><span>配布率:</span><span>${rateDisplay}%</span></div>
@@ -130,7 +226,7 @@ function buildPopupContent(row, layer) {
 		<div class="row"><span>最終更新:</span><span>${row.last_updated_at ? new Date(row.last_updated_at).toLocaleString('ja-JP') : '未記録'}</span></div>
 	`;
 
-	if (!state.viewOnly) {
+	if (canEditAssignee) {
 		const form = document.createElement('div');
 		form.className = 'record-form';
 		form.innerHTML = `
@@ -165,6 +261,7 @@ function buildPopupContent(row, layer) {
 			}
 			state.termDataByAreaId.set(row.area_id, data);
 			redrawStyles();
+			updateHeaderStats();
 			layer.setPopupContent(buildPopupContent(data, layer));
 			layer.getPopup().update();
 		});
@@ -218,6 +315,7 @@ function buildAssigneeEditContent(row, layer) {
 		}
 		state.termDataByAreaId.set(row.area_id, data);
 		redrawStyles();
+		updateHeaderStats();
 		layer.setPopupContent(buildPopupContent(data, layer));
 		layer.getPopup().update();
 	});
@@ -258,6 +356,7 @@ async function selectTerm(termId) {
 	const rows = await res.json();
 	state.termDataByAreaId = new Map(rows.map((r) => [r.area_id, r]));
 	redrawStyles();
+	updateHeaderStats();
 }
 
 document.getElementById('term-select').addEventListener('change', (e) => {
@@ -323,6 +422,16 @@ document.getElementById('logout-button').addEventListener('click', () => {
 	location.href = '/login.html';
 });
 
+// ---- ヘッダの開閉 ----
+// 三角マーク（.header-toggle-hint）のクリックのみで開閉する。Leafletは自分では
+// コンテナサイズの変化を検知しないため、開閉後は必ずinvalidateSize()でタイル表示を再計算させる。
+
+const header = document.getElementById('header');
+document.querySelector('.header-toggle-hint').addEventListener('click', () => {
+	header.classList.toggle('collapsed');
+	requestAnimationFrame(() => map.invalidateSize());
+});
+
 const newTermButton = document.getElementById('new-term-button');
 if (session.user.role === '管理者') {
 	newTermButton.style.display = 'block';
@@ -349,6 +458,7 @@ if (session.user.role === '管理者') {
 async function init() {
 	const usersRes = await fetch('/api/users/active');
 	state.activeUsers = await usersRes.json();
+	populateAssigneeFilterSelect();
 	await loadBoundary();
 	await loadTerms();
 }

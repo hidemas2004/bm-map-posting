@@ -1,10 +1,11 @@
 import { handleLogin, requireAdmin, requireAuth, type AuthEnv } from './auth';
 import { listActiveUsers, type UsersEnv } from './users';
-import { listAreas, type AreasEnv } from './areas';
+import { exportAreasCsv, importAreas, listAreas, listAreasWithRecentTerms, type AreasEnv } from './areas';
 import { createNewTerm, getTermData, listTerms, type TermsEnv } from './terms';
 import { recordDistribution, setAssignee, type RecordsEnv } from './records';
+import { exportActivityLogCsv, listActivityLog, type ActivityLogEnv } from './activity_log';
 
-export interface Env extends AuthEnv, UsersEnv, AreasEnv, TermsEnv, RecordsEnv {
+export interface Env extends AuthEnv, UsersEnv, AreasEnv, TermsEnv, RecordsEnv, ActivityLogEnv {
 	ASSETS: { fetch(request: Request): Promise<Response> };
 }
 
@@ -18,6 +19,10 @@ export default {
 		if (url.pathname === '/api/users/active' && request.method === 'GET') {
 			return listActiveUsers(env);
 		}
+		if (url.pathname === '/api/areas/import' && request.method === 'POST') {
+			// セッション認証ではなく AREAS_IMPORT_TOKEN による専用トークン認証（importAreas内で検証）
+			return importAreas(request, env);
+		}
 
 		// /api/ 配下はここから下すべて認証必須
 		if (url.pathname.startsWith('/api/')) {
@@ -28,6 +33,18 @@ export default {
 
 			if (url.pathname === '/api/areas' && request.method === 'GET') {
 				return listAreas(env);
+			}
+			if (url.pathname === '/api/areas/with-terms' && request.method === 'GET') {
+				return listAreasWithRecentTerms(env);
+			}
+			if (url.pathname === '/api/areas/export' && request.method === 'GET') {
+				return exportAreasCsv(env);
+			}
+			if (url.pathname === '/api/activity-log' && request.method === 'GET') {
+				return listActivityLog(env, url.searchParams.get('term_id'));
+			}
+			if (url.pathname === '/api/activity-log/export' && request.method === 'GET') {
+				return exportActivityLogCsv(env, url.searchParams.get('term_id'));
 			}
 			if (url.pathname === '/api/terms' && request.method === 'GET') {
 				return listTerms(env);
@@ -44,7 +61,7 @@ export default {
 				if (!admin) {
 					return Response.json({ error: '管理者権限が必要です' }, { status: 403 });
 				}
-				const body = await request.json<{ term_name?: string }>().catch(() => ({}));
+				const body = await request.json<{ term_name?: string }>().catch(() => ({}) as { term_name?: string });
 				return createNewTerm(env, String(body.term_name ?? ''));
 			}
 			if (url.pathname === '/api/record' && request.method === 'POST') {

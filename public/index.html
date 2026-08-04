@@ -8,19 +8,30 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body class="map-page">
 <header id="header">
-  <select id="term-select"></select>
-  <h1>ポスティング管理 <span id="view-only-badge">閲覧専用</span></h1>
-  <div style="display:flex; gap:6px;">
-    <button id="gps-button" type="button" title="現在地">📍</button>
-    <button id="menu-button" type="button" title="メニュー">&#8801;</button>
+  <div class="header-row header-row-controls">
+    <select id="term-select"></select>
+    <span id="view-only-badge">閲覧専用</span>
+    <select id="assignee-filter"></select>
+    <div class="header-actions">
+      <button id="gps-button" type="button" title="現在地">📍</button>
+      <button id="menu-button" type="button" title="メニュー">&#8801;</button>
+    </div>
+  </div>
+  <div class="header-row header-row-stats" id="header-stats">
+    <span>世帯数: <strong id="stat-households">0</strong></span>
+    <span>配布数: <strong id="stat-distributed">0</strong></span>
+    <span>配布率: <strong id="stat-rate">0.0%</strong></span>
+  </div>
+  <div class="header-toggle-hint" aria-hidden="true"></div>
+  <div id="menu-panel">
+    <button id="new-term-button" type="button" style="display:none;">新ターム開始</button>
+    <a href="/history.html" class="menu-link">履歴一覧</a>
+    <a href="/areas.html" class="menu-link">地域マスタ一覧</a>
+    <button id="logout-button" type="button">ログアウト</button>
   </div>
 </header>
-<div id="menu-panel">
-  <button id="new-term-button" type="button" style="display:none;">新ターム開始</button>
-  <button id="logout-button" type="button">ログアウト</button>
-</div>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
