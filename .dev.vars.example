@@ -1,0 +1,11 @@
+# ローカル開発用の環境変数サンプル。コピーして .dev.vars を作成し、値を設定してください。
+# .dev.vars はgit管理対象外（.gitignore参照）。本番はCloudflareの `wrangler secret put` で設定する。
+
+# セッショントークンの署名に使う秘密鍵（フェーズ2: 認証実装で使用）
+SESSION_SECRET=change-me-to-a-random-string
+
+# 地域マスタ一括投入API（POST /api/areas/import）を保護するトークン（フェーズ3以降で使用）
+AREAS_IMPORT_TOKEN=change-me-to-a-random-string
+
+# e-Stat GIS API のアプリケーションID（フェーズ6: 境界GeoJSON取得で使用）
+ESTAT_APP_ID=
