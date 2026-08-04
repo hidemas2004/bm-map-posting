@@ -150,8 +150,69 @@ CSVダウンロードに対応している（スプレッドシートでの目�
 5. **境界GeoJSONへのマージ**: 抽出したfeatureを `public/data/boundary.geojson` の
    `features` 配列に追記する（`area_id` の重複がないことを確認）。
 
+上記1〜3は `scripts/lib/estat-boundary.mjs` としてスクリプト化済み。単体実行する場合は
+
+```bash
+npm run fetch-boundary-data -- --region 202704-hiratsuka --city 平塚市
+# 政令指定都市の区の場合: --city 横浜市鶴見区
+```
+
+`regions/<地域ID>/areas.sql` と `boundary.geojson` が生成される（下記「複数地域の並行運用」参照）。
+
+## 複数地域の並行運用
+
+大和市とは別に、平塚市・藤沢市など複数の市区町村を**並行して**稼働させる場合、地域ごとに
+独立したCloudflare Worker・D1データベースを持つ「[named environment]
+(https://developers.cloudflare.com/workers/wrangler/environments/)」として追加する。
+`wrangler.jsonc` のトップレベル（大和市の本番設定）は変更せず、`env.<地域ID>` ブロックとして
+追記される。ロジック（`worker/*.ts`・`public/app.js`等）は全地域で共通のまま。
+
+### 対話スクリプトで新しい地域を追加する
+
+```bash
+npx wrangler login   # 初回のみ。Cloudflareアカウントへの認証が必要
+npm run new-region
+```
+
+対話形式で以下を順に行う（`Ctrl+C`で中断しても、地域IDを指定して再実行すれば完了済みの
+ステップはスキップして続きから再開できる）:
+
+1. 地域ID（例: `202704-hiratsuka`）・表示名・e-StatのCITY_NAMEを入力
+2. 境界データ・地域マスタの収集（e-Statから自動取得 or 手動で`regions/<id>/`に用意）
+3. 境界データのbboxから地図初期座標を自動算出（上書き可）・`regions/<id>/config.js`を生成
+4. 初期管理者ユーザーを1名だけ登録（以降の担当者追加はデプロイ後に`/users.html`のCSV
+   インポートで行う）
+5. D1データベースを新規作成し、`wrangler.jsonc`に`env.<id>`ブロックを追記
+6. マイグレーション・地域マスタ・管理者ユーザーを新D1へ投入
+7. `SESSION_SECRET`・`AREAS_IMPORT_TOKEN`を自動生成し`wrangler secret put`で設定
+   （値は画面に表示されない）
+8. **ここまでの入力内容を一覧表示し、「この内容でデプロイしてよいか」を確認**
+9. 確認後、`public/config.js`・`public/data/boundary.geojson`を該当地域の内容に切り替えて
+   `wrangler deploy --env <id>`を実行
+
+- 各地域の設定は `regions/<地域ID>/`（`meta.json`・`config.js`・`boundary.geojson`・
+  `areas.sql`）にまとめて保存される。**合言葉などの秘密情報はここには保存されない**
+  （OS一時ディレクトリ経由でD1に投入後、即削除する設計）。
+- デプロイ後、ローカルの`public/`には直前にデプロイした地域の内容が残る（`npm run dev`で
+  ローカル確認する際はどの地域を見ているか注意。別地域を扱う際は改めてこのスクリプトを
+  実行すれば自動的に切り替わる）。
+- スクリプト本体は `scripts/new-region.mjs`（オーケストレーション）、
+  `scripts/lib/estat-boundary.mjs`（境界データ取得・整形）、
+  `scripts/lib/wrangler-jsonc.mjs`（`wrangler.jsonc`への安全な追記）、
+  `scripts/lib/config-template.mjs`（`config.js`生成・bbox中心計算）に分かれている。
+- e-Statの自動取得には`www.e-stat.go.jp`へのネットワーク到達性が必要。到達できない環境
+  （一部のサンドボックス等）では対話中に「手動で用意してください」と案内されるので、
+  上記「行政区域データの追加・丁目単位への格上げ手順」に沿って別環境で用意したファイルを
+  `regions/<id>/`に置いてから再開する。
+
 ## 既知の制約・今後の作業
 
+- **`npm run new-region` は実際のCloudflare操作（D1作成・Secrets設定・deploy）を伴う箇所を
+  実機（Cloudflare認証情報がある環境）で検証できていない**。境界データの変換ロジック
+  （漢数字丁目のパース・複数ポリゴンのマージ・世帯数合算）と`wrangler.jsonc`への追記処理は
+  単体テスト済みだが、初めて新しい地域を追加する際は各ステップの出力（特に`wrangler d1 create`
+  の`database_id`抽出）を確認しながら進めること。想定外のwrangler出力形式で`database_id`の
+  自動抽出に失敗した場合は、出力を貼り付けて手動入力できるようにしてある。
 - **対象地域は大和市のみ**: 横浜市の区単位プレースホルダデータは削除済み（世帯数が概算で
   正式なものではなかったため）。他市区町村を追加する場合は上記「行政区域データの追加手順」
   に沿って、大和市と同様にe-Stat由来の丁目単位の正式データとして追加する。

@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "new-region": "node scripts/new-region.mjs",
+    "fetch-boundary-data": "node scripts/fetch-boundary-data.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260726.1",
