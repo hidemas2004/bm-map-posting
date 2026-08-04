@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ポスティング管理 ユーザー管理</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="list-page">
+<header id="header">
+  <div class="header-row">
+    <h1>ユーザー管理</h1>
+    <div class="header-actions">
+      <a href="/" id="back-link">地図に戻る</a>
+    </div>
+  </div>
+</header>
+<main class="list-main">
+  <div class="list-toolbar">
+    <span id="user-count"></span>
+    <button id="csv-download-button" type="button">CSVダウンロード</button>
+  </div>
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr><th>user_id</th><th>氏名</th><th>権限</th><th>ログイン可否</th></tr>
+      </thead>
+      <tbody id="users-tbody"></tbody>
+    </table>
+  </div>
+
+  <section class="import-section">
+    <h2>CSVで追加・修正</h2>
+    <p class="import-hint">
+      ダウンロードしたCSVを編集してアップロードしてください。<code>user_id</code>が既存なら上書き、
+      なければ新規追加されます。<code>passphrase</code>列を空欄のままにすると、既存ユーザーの
+      合言葉は変更されません（新規ユーザーは合言葉の入力が必須です）。
+    </p>
+    <input type="file" id="import-file" accept=".csv,text/csv">
+    <button id="import-button" type="button">アップロードして反映</button>
+    <p class="error" id="import-error"></p>
+    <p class="success" id="import-success"></p>
+  </section>
+</main>
+<script src="/users.js"></script>
+</body>
+</html>

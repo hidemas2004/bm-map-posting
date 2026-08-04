@@ -1,5 +1,5 @@
 import { handleLogin, requireAdmin, requireAuth, type AuthEnv } from './auth';
-import { listActiveUsers, type UsersEnv } from './users';
+import { exportUsersCsv, importUsers, listActiveUsers, listUsers, type UsersEnv } from './users';
 import { exportAreasCsv, importAreas, listAreas, listAreasWithRecentTerms, type AreasEnv } from './areas';
 import { createNewTerm, getTermData, listTerms, type TermsEnv } from './terms';
 import { recordDistribution, setAssignee, type RecordsEnv } from './records';
@@ -63,6 +63,27 @@ export default {
 				}
 				const body = await request.json<{ term_name?: string }>().catch(() => ({}) as { term_name?: string });
 				return createNewTerm(env, String(body.term_name ?? ''));
+			}
+			if (url.pathname === '/api/users' && request.method === 'GET') {
+				const admin = await requireAdmin(request, env);
+				if (!admin) {
+					return Response.json({ error: '管理者権限が必要です' }, { status: 403 });
+				}
+				return listUsers(env);
+			}
+			if (url.pathname === '/api/users/export' && request.method === 'GET') {
+				const admin = await requireAdmin(request, env);
+				if (!admin) {
+					return Response.json({ error: '管理者権限が必要です' }, { status: 403 });
+				}
+				return exportUsersCsv(env);
+			}
+			if (url.pathname === '/api/users/import' && request.method === 'POST') {
+				const admin = await requireAdmin(request, env);
+				if (!admin) {
+					return Response.json({ error: '管理者権限が必要です' }, { status: 403 });
+				}
+				return importUsers(request, env);
 			}
 			if (url.pathname === '/api/record' && request.method === 'POST') {
 				return recordDistribution(request, env, user);

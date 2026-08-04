@@ -435,6 +435,7 @@ document.querySelector('.header-toggle-hint').addEventListener('click', () => {
 const newTermButton = document.getElementById('new-term-button');
 if (session.user.role === '管理者') {
 	newTermButton.style.display = 'block';
+	document.getElementById('users-link').style.display = 'block';
 	newTermButton.addEventListener('click', async () => {
 		const termName = prompt('新しいタームの名称を入力してください');
 		if (!termName) return;
