@@ -48,6 +48,15 @@ function areaHouseholdsFor(row) {
 	return total;
 }
 
+/** rowと同じエリア（town+chome）に属する全区画の累計配布世帯数合計 */
+function areaDistributedFor(row) {
+	let total = 0;
+	for (const r of state.termDataByAreaId.values()) {
+		if (r.town === row.town && r.chome === row.chome) total += r.distributed_total;
+	}
+	return total;
+}
+
 function areaTitle(row) {
 	let title = row.city;
 	if (row.ward) title += ` ${row.ward}`;
@@ -272,6 +281,12 @@ function buildPopupContent(row, layer) {
 	const isNonTarget = !row.area_manager_id;
 	const canEditAreaManager = !state.viewOnly && !isZeroHousehold;
 	const canEditAssignee = !state.viewOnly && !isZeroHousehold && !isNonTarget;
+
+	const areaHouseholds = areaHouseholdsFor(row);
+	const areaDistributed = areaDistributedFor(row);
+	const areaRateDisplay = (areaHouseholds > 0 ? (areaDistributed / areaHouseholds) * 100 : 0).toFixed(1);
+	const areaBarWidth = Math.min(Number(areaRateDisplay), 100);
+
 	const rateDisplay = row.distribution_rate.toFixed(1);
 	const barWidth = Math.min(row.distribution_rate, 100);
 
@@ -283,14 +298,15 @@ function buildPopupContent(row, layer) {
 		</div>
 		${!isZeroHousehold && isNonTarget ? '<p class="zero-household-note">エリア担当が未設定のため、担当者設定・配布記録の対象外です。</p>' : ''}
 		<div class="assignee-row">
-			<span>担当者: ${row.assignee_name || '未担当'}</span>
+			<span>区画担当: ${row.assignee_name || '未担当'}</span>
 			${canEditAssignee ? '<button type="button" data-action="edit-assignee">変更する</button>' : ''}
 		</div>
 		${isZeroHousehold ? '<p class="zero-household-note">世帯数が0のため、エリア担当設定・担当者設定・配布記録の対象外です。</p>' : ''}
-		<div class="row"><span>エリア世帯数:</span><span>${areaHouseholdsFor(row).toLocaleString('ja-JP')} 世帯</span></div>
+		<div class="row"><span>エリア世帯数:</span><span>${areaHouseholds.toLocaleString('ja-JP')} 世帯</span></div>
 		<div class="row"><span>区画世帯数:</span><span>${row.num_households.toLocaleString('ja-JP')} 世帯</span></div>
-		<div class="row"><span>累計配布:</span><span>${row.distributed_total.toLocaleString('ja-JP')} 枚</span></div>
-		<div class="row"><span>配布率:</span><span>${rateDisplay}%</span></div>
+		<div class="row"><span>エリア累計配布:</span><span>${areaDistributed.toLocaleString('ja-JP')}世帯(${areaRateDisplay}%)</span></div>
+		<div class="rate-bar-outer"><div class="rate-bar-inner" style="width:${areaBarWidth}%"></div></div>
+		<div class="row"><span>区画累計配布:</span><span>${row.distributed_total.toLocaleString('ja-JP')}世帯(${rateDisplay}%)</span></div>
 		<div class="rate-bar-outer"><div class="rate-bar-inner" style="width:${barWidth}%"></div></div>
 		<div class="row"><span>最終更新:</span><span>${row.last_updated_at ? new Date(row.last_updated_at).toLocaleString('ja-JP') : '未記録'}</span></div>
 	`;
@@ -393,9 +409,9 @@ function buildAreaManagerEditContent(row, layer) {
 		}
 		// 同一エリア内の複数区画が一括更新されるため、現タームのデータを丸ごと再取得して反映する
 		await selectTerm(state.currentTermId);
-		const updatedRow = state.termDataByAreaId.get(row.area_id);
-		layer.setPopupContent(buildPopupContent(updatedRow, layer));
-		layer.getPopup().update();
+		// エリア担当の設定完了直後に配布記入フォーム付きのポップアップが自動で開くと、
+		// 意図せず配布実績を入力してしまいやすいため、ここではポップアップを閉じるだけにする(issue#11)。
+		layer.closePopup();
 	});
 
 	return container;
@@ -411,7 +427,7 @@ function buildAssigneeEditContent(row, layer) {
 		.join('');
 
 	container.innerHTML = `
-		<div class="title">担当者を設定</div>
+		<div class="title">区画担当を設定</div>
 		<select data-role="assignee-select">${options}</select>
 		<p class="error" data-role="assignee-error"></p>
 		<div class="actions">
