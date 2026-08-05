@@ -14,5 +14,13 @@
   `assignee_name`）・配布実績（`term_data.distributed_total` 等）はこの単位で記録する。
 
 「エリア担当」と「担当者」は別概念（前者はエリア単位、後者は区画単位）。エリア担当を設定すると、
-同一エリア内で担当者未設定の区画に担当者として一括反映される（詳細は `worker/records.ts` の
-`setAreaManager` のコメント参照）。
+同一エリア内の全区画（世帯数0を除く）の担当者が一律でそのエリア担当に置き換わる（既存の担当者設定も
+上書きする。詳細は `worker/records.ts` の `setAreaManager` のコメント参照）。
+
+## CSS上の注意（`public/style.css`）
+
+`#header` に `overflow-x: hidden` 等を付けないこと。CSSの仕様上 `overflow-y` も連動して
+クリップ対象になり、`#header` の子要素として `top: 100%`（親の下端の外側）に絶対配置される
+`#menu-panel`（ハンバーガーメニュー）が丸ごと非表示になる（issue#7対応時に混入し、クリックは
+効くが何も表示されない不具合として発生・修正済み）。横方向のはみ出し防止が必要な場合は
+`#menu-panel` を持たない `.header-row` 側に付ける。

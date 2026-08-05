@@ -38,6 +38,15 @@ function currentTerm() {
 	return state.terms.find((t) => t.term_id === state.currentTermId) ?? null;
 }
 
+/** rowと同じエリア（town+chome）に属する全区画の世帯数合計 */
+function areaHouseholdsFor(row) {
+	let total = 0;
+	for (const r of state.termDataByAreaId.values()) {
+		if (r.town === row.town && r.chome === row.chome) total += r.num_households;
+	}
+	return total;
+}
+
 function areaTitle(row) {
 	let title = row.city;
 	if (row.ward) title += ` ${row.ward}`;
@@ -116,7 +125,10 @@ function styleForArea(areaId) {
 			fillOpacity: 0,
 		};
 	}
-	const progress = Math.min(row.distribution_rate / RATE_FOR_MAX_OPACITY, 1.0);
+	const progress = Math.min(
+		Math.max((row.distribution_rate - RATE_FOR_MIN_OPACITY) / (RATE_FOR_MAX_OPACITY - RATE_FOR_MIN_OPACITY), 0),
+		1.0,
+	);
 	const opacity = MIN_FILL_OPACITY + (MAX_FILL_OPACITY - MIN_FILL_OPACITY) * progress;
 	return {
 		color: ASSIGNED_BOUNDARY_COLOR,
@@ -135,10 +147,10 @@ function redrawStyles() {
 map.on('zoomend', redrawStyles);
 
 /**
- * ヘッダの全世帯・予定世帯・配布数・予定達成率を集計・表示する。
- * 全世帯のみ担当者フィルタの影響を受けない。予定世帯・配布数・予定達成率は
- * 担当者フィルタに連動し、特定の担当者を選ぶと「その人の予定に対する達成率」になる
- * （予定達成率の分母はフィルタ後の予定世帯）。
+ * ヘッダの全世帯数・実績/予定枚数を集計・表示する。
+ * 全世帯数のみ担当者フィルタの影響を受けない。実績・予定枚数は担当者フィルタに連動し、
+ * 特定の担当者を選ぶとその担当者分のみの計になる。
+ * 実績率(③)の分母は予定枚数(④)、予定率(⑤)の分母は全世帯数(①)。
  */
 function updateHeaderStats() {
 	let totalHouseholds = 0;
@@ -156,14 +168,14 @@ function updateHeaderStats() {
 		distributed += row.distributed_total;
 	}
 
-	const plannedRatio = totalHouseholds > 0 ? Math.round((plannedHouseholds / totalHouseholds) * 100) : 0;
-	const achievementRate = plannedHouseholds > 0 ? Math.round((distributed / plannedHouseholds) * 100) : 0;
+	const distributedRate = plannedHouseholds > 0 ? ((distributed / plannedHouseholds) * 100).toFixed(1) : '0.0';
+	const plannedRate = totalHouseholds > 0 ? ((plannedHouseholds / totalHouseholds) * 100).toFixed(1) : '0.0';
 
 	document.getElementById('stat-total-households').textContent = totalHouseholds.toLocaleString('ja-JP');
-	document.getElementById('stat-planned-households').textContent =
-		`${plannedHouseholds.toLocaleString('ja-JP')}(${plannedRatio}%)`;
 	document.getElementById('stat-distributed').textContent = distributed.toLocaleString('ja-JP');
-	document.getElementById('stat-achievement-rate').textContent = `${achievementRate}%`;
+	document.getElementById('stat-distributed-rate').textContent = `${distributedRate}%`;
+	document.getElementById('stat-planned-households').textContent = plannedHouseholds.toLocaleString('ja-JP');
+	document.getElementById('stat-planned-rate').textContent = `${plannedRate}%`;
 }
 
 function populateAssigneeFilterSelect() {
@@ -259,7 +271,8 @@ function buildPopupContent(row, layer) {
 			${canEditAssignee ? '<button type="button" data-action="edit-assignee">変更する</button>' : ''}
 		</div>
 		${isZeroHousehold ? '<p class="zero-household-note">世帯数が0のため、エリア担当設定・担当者設定・配布記録の対象外です。</p>' : ''}
-		<div class="row"><span>世帯数:</span><span>${row.num_households.toLocaleString('ja-JP')} 世帯</span></div>
+		<div class="row"><span>エリア世帯数:</span><span>${areaHouseholdsFor(row).toLocaleString('ja-JP')} 世帯</span></div>
+		<div class="row"><span>区画世帯数:</span><span>${row.num_households.toLocaleString('ja-JP')} 世帯</span></div>
 		<div class="row"><span>累計配布:</span><span>${row.distributed_total.toLocaleString('ja-JP')} 枚</span></div>
 		<div class="row"><span>配布率:</span><span>${rateDisplay}%</span></div>
 		<div class="rate-bar-outer"><div class="rate-bar-inner" style="width:${barWidth}%"></div></div>

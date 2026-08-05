@@ -145,8 +145,8 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 /**
  * エリア担当（town+chome単位）を設定する。同一エリア内の全区画（世帯数0を含む）の
  * area_manager_id/area_manager_name を一括更新し、エリア担当を設定した場合はさらに
- * 現在進行中タームの担当者(term_data.assignee)が未設定の区画（世帯数>0のもの）へ
- * 一括反映する（既に担当者が設定されている区画は変更しない）。
+ * 現在進行中タームの担当者(term_data.assignee)を、同一エリア内の全区画（世帯数>0のもの）へ
+ * 一括反映する（既に担当者が設定されている区画も上書きする）。
  * エリア担当を未設定(null)に戻す場合は area_manager のみ更新し、担当者の一括反映は行わない。
  */
 export async function setAreaManager(request: Request, env: RecordsEnv): Promise<Response> {
@@ -192,7 +192,7 @@ export async function setAreaManager(request: Request, env: RecordsEnv): Promise
 		if (activeTerm) {
 			await env.DB.prepare(
 				`UPDATE term_data SET assignee_id = ?, assignee_name = ?
-				 WHERE term_id = ? AND assignee_id IS NULL
+				 WHERE term_id = ?
 				   AND area_id IN (SELECT area_id FROM areas WHERE town = ? AND chome = ? AND num_households > 0)`,
 			)
 				.bind(areaManagerId, areaManagerName, activeTerm.term_id, area.town, area.chome)

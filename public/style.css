@@ -5,6 +5,10 @@ html, body { margin: 0; height: 100%; font-family: ui-sans-serif, "Hiragino Kaku
    ヘッダの高さが可変（2行⇔折りたたみ時1行）でも#mapが残り全部を自動で埋める。 */
 body.map-page { display: flex; flex-direction: column; overflow: hidden; }
 
+/* 注意: #headerにoverflow-x:hidden等を付けないこと。CSSの仕様上overflow-yも
+   連動してクリップ対象になり、子要素の#menu-panel（top:100%で#headerの下端の
+   外側にはみ出す前提のドロップダウン）が丸ごと非表示になる（過去に発生・修正済み）。
+   横はみ出し防止が必要な場合は、#menu-panelを持たない.header-row側に付けること。 */
 #header {
   position: relative;
   z-index: 1000;
@@ -12,11 +16,14 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
   color: #f3f4f6;
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
   flex-shrink: 0;
-  overflow-x: hidden;
-  max-width: 100vw;
 }
+/* 横はみ出し防止(issue#7)はここで行う（#header自体にoverflow-x:hiddenを付けると、
+   CSSの仕様でoverflow-yも自動的にクリップ対象になり、#header内に絶対配置される
+   #menu-panel（top:100%で下側にはみ出す前提）が丸ごと非表示になってしまうため）。 */
 .header-row {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px; flex-wrap: wrap;
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 .header-row-stats {
   padding-top: 0; font-size: 12px; gap: 16px; color: #cbd5e1;
@@ -46,6 +53,8 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
 
 #map { flex: 1 1 auto; min-height: 0; touch-action: none; }
 
+/* top:100%で親#headerの下端の外側にはみ出す前提。#headerにoverflow-x/yを
+   付けると丸ごとクリップされて非表示になるので注意（#header付近のコメント参照）。 */
 #menu-panel {
   display: none;
   position: absolute; top: 100%; right: 8px; z-index: 1001;
