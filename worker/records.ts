@@ -160,11 +160,14 @@ export async function setAreaManager(request: Request, env: RecordsEnv): Promise
 		return Response.json({ error: 'area_id を指定してください' }, { status: 400 });
 	}
 
-	const area = await env.DB.prepare('SELECT town, chome FROM areas WHERE area_id = ?')
+	const area = await env.DB.prepare('SELECT town, chome, num_households FROM areas WHERE area_id = ?')
 		.bind(areaId)
-		.first<{ town: string; chome: string }>();
+		.first<{ town: string; chome: string; num_households: number }>();
 	if (!area) {
 		return Response.json({ error: '指定されたエリアが見つかりません' }, { status: 404 });
+	}
+	if (area.num_households === 0) {
+		return Response.json({ error: '世帯数が0の区画ではエリア担当を設定できません' }, { status: 400 });
 	}
 
 	let areaManagerName = '';

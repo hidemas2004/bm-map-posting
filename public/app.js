@@ -242,7 +242,7 @@ function buildPopupContent(row, layer) {
 
 	const isZeroHousehold = row.num_households === 0;
 	const isNonTarget = !row.area_manager_id;
-	const canEditAreaManager = !state.viewOnly;
+	const canEditAreaManager = !state.viewOnly && !isZeroHousehold;
 	const canEditAssignee = !state.viewOnly && !isZeroHousehold && !isNonTarget;
 	const rateDisplay = row.distribution_rate.toFixed(1);
 	const barWidth = Math.min(row.distribution_rate, 100);
@@ -253,12 +253,12 @@ function buildPopupContent(row, layer) {
 			<span>エリア担当: ${row.area_manager_name || '未設定'}</span>
 			${canEditAreaManager ? '<button type="button" data-action="edit-area-manager">変更する</button>' : ''}
 		</div>
-		${isNonTarget ? '<p class="zero-household-note">エリア担当が未設定のため、担当者設定・配布記録の対象外です。</p>' : ''}
+		${!isZeroHousehold && isNonTarget ? '<p class="zero-household-note">エリア担当が未設定のため、担当者設定・配布記録の対象外です。</p>' : ''}
 		<div class="assignee-row">
 			<span>担当者: ${row.assignee_name || '未担当'}</span>
 			${canEditAssignee ? '<button type="button" data-action="edit-assignee">変更する</button>' : ''}
 		</div>
-		${!isNonTarget && isZeroHousehold ? '<p class="zero-household-note">世帯数が0のため、担当者設定・配布記録の対象外です。</p>' : ''}
+		${isZeroHousehold ? '<p class="zero-household-note">世帯数が0のため、エリア担当設定・担当者設定・配布記録の対象外です。</p>' : ''}
 		<div class="row"><span>世帯数:</span><span>${row.num_households.toLocaleString('ja-JP')} 世帯</span></div>
 		<div class="row"><span>累計配布:</span><span>${row.distributed_total.toLocaleString('ja-JP')} 枚</span></div>
 		<div class="row"><span>配布率:</span><span>${rateDisplay}%</span></div>
