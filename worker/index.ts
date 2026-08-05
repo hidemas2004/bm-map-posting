@@ -4,8 +4,9 @@ import { exportAreasCsv, importAreas, listAreas, listAreasWithCurrentTerm, type 
 import { createNewTerm, getTermData, listTerms, type TermsEnv } from './terms';
 import { recordDistribution, setAreaManager, setAssignee, type RecordsEnv } from './records';
 import { exportActivityLogCsv, listActivityLog, type ActivityLogEnv } from './activity_log';
+import { deleteTerm, type ResetEnv } from './reset';
 
-export interface Env extends AuthEnv, UsersEnv, AreasEnv, TermsEnv, RecordsEnv, ActivityLogEnv {
+export interface Env extends AuthEnv, UsersEnv, AreasEnv, TermsEnv, RecordsEnv, ActivityLogEnv, ResetEnv {
 	ASSETS: { fetch(request: Request): Promise<Response> };
 }
 
@@ -93,6 +94,17 @@ export default {
 			}
 			if (url.pathname === '/api/area-manager' && request.method === 'POST') {
 				return setAreaManager(request, env);
+			}
+			if (url.pathname === '/api/term/delete' && request.method === 'POST') {
+				const admin = await requireAdmin(request, env);
+				if (!admin) {
+					return Response.json({ error: '管理者権限が必要です' }, { status: 403 });
+				}
+				const body = await request.json<{ term_id?: number }>().catch(() => ({}) as { term_id?: number });
+				if (!body.term_id) {
+					return Response.json({ error: 'term_id を指定してください' }, { status: 400 });
+				}
+				return deleteTerm(env, String(body.term_id));
 			}
 
 			return Response.json({ error: 'Not Found' }, { status: 404 });

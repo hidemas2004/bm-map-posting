@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ポスティング管理 データクリア</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="list-page">
+<header id="header">
+  <div class="header-row">
+    <h1>データクリア</h1>
+    <div class="header-actions">
+      <a href="/" id="back-link">地図に戻る</a>
+    </div>
+  </div>
+</header>
+<main class="list-main">
+  <section class="import-section">
+    <h2>ターム削除</h2>
+    <p class="import-hint">
+      タームを削除すると、そのタームの担当者・配布実績・配布履歴に加えて、全区画のエリア担当
+      （マスタ側の設定）もあわせて初期化されます。区画マスタ（境界データ・世帯数など）は残ります。
+      この操作は取り消せません。
+    </p>
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr><th>term_id</th><th>タイトル</th><th>状態</th><th>開始日</th><th>終了日</th><th></th></tr>
+        </thead>
+        <tbody id="terms-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script src="/data-clear.js"></script>
+</body>
+</html>

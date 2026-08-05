@@ -36,6 +36,12 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
   background: #1f2937; color: #f3f4f6; border: 1px solid #374151; border-radius: 6px;
   padding: 6px 10px; font-size: 16px; cursor: pointer;
 }
+/* GPSボタン(📍)とメニューボタン(≡)は文字幅が異なり隣り合うと大きさが揃って
+   見えなかったため、幅を固定して中央寄せにして揃える（issue#5対応時の指摘）。 */
+.header-actions button {
+  width: 42px; padding-left: 0; padding-right: 0;
+  display: flex; align-items: center; justify-content: center;
+}
 #header button.active { background: #2563eb; border-color: #2563eb; }
 #view-only-badge {
   display: none;
