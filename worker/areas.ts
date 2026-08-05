@@ -13,6 +13,8 @@ interface AreaRow {
 	chome: string;
 	block: string;
 	num_households: number;
+	area_manager_id: string | null;
+	area_manager_name: string;
 }
 
 export async function listAreas(env: AreasEnv): Promise<Response> {
@@ -20,86 +22,80 @@ export async function listAreas(env: AreasEnv): Promise<Response> {
 	return Response.json(results);
 }
 
-const RECENT_TERMS_LIMIT = 5;
-
-interface TermSummary {
+interface CurrentTerm {
 	term_id: number;
 	term_name: string;
 }
 
-interface AreaTermStat {
-	term_id: number;
-	term_name: string;
+interface AreaWithCurrentTerm extends AreaRow {
+	assignee_name: string;
 	distributed_total: number;
 	distribution_rate: number;
 }
 
-interface AreaWithTerms extends AreaRow {
-	terms: AreaTermStat[];
-}
-
 /**
- * 地域マスタに、直近 RECENT_TERMS_LIMIT タームぶんの配布数・配布率を横持ちで付加する。
- * ある area が該当タームの term_data 行を持たない場合（タームより後に追加された地域など）は
- * 0/0 として扱う（`importAreas` は進行中タームにしか term_data を補完しないため起こりうる）。
+ * 地域マスタに、現在進行中タームの担当・配布数・配布率を付加する。
+ * 進行中タームが無い場合、または area が現タームの term_data 行を持たない場合
+ * （タームより後に追加された地域など）は 0/0/未担当 として扱う。
  */
-async function areasWithRecentTermStats(
+async function areasWithCurrentTermStats(
 	env: AreasEnv,
-): Promise<{ areas: AreaWithTerms[]; terms: TermSummary[] }> {
-	const [{ results: areaRows }, { results: terms }] = await Promise.all([
+): Promise<{ areas: AreaWithCurrentTerm[]; term: CurrentTerm | null }> {
+	const [{ results: areaRows }, term] = await Promise.all([
 		env.DB.prepare('SELECT * FROM areas ORDER BY area_id').all<AreaRow>(),
-		env.DB.prepare('SELECT term_id, term_name FROM terms ORDER BY term_id DESC LIMIT ?')
-			.bind(RECENT_TERMS_LIMIT)
-			.all<TermSummary>(),
+		env.DB.prepare("SELECT term_id, term_name FROM terms WHERE status = '進行中'").first<CurrentTerm>(),
 	]);
 
-	if (terms.length === 0) {
-		return { areas: areaRows.map((area) => ({ ...area, terms: [] })), terms: [] };
+	if (!term) {
+		return {
+			areas: areaRows.map((area) => ({ ...area, assignee_name: '', distributed_total: 0, distribution_rate: 0 })),
+			term: null,
+		};
 	}
 
-	const placeholders = terms.map(() => '?').join(',');
 	const { results: termDataRows } = await env.DB.prepare(
-		`SELECT area_id, term_id, distributed_total, distribution_rate FROM term_data WHERE term_id IN (${placeholders})`,
+		'SELECT area_id, assignee_name, distributed_total, distribution_rate FROM term_data WHERE term_id = ?',
 	)
-		.bind(...terms.map((t) => t.term_id))
-		.all<{ area_id: string; term_id: number; distributed_total: number; distribution_rate: number }>();
+		.bind(term.term_id)
+		.all<{ area_id: string; assignee_name: string; distributed_total: number; distribution_rate: number }>();
 
-	const statByKey = new Map(termDataRows.map((row) => [`${row.area_id}:${row.term_id}`, row]));
+	const statByAreaId = new Map(termDataRows.map((row) => [row.area_id, row]));
 
-	const areas = areaRows.map((area) => ({
-		...area,
-		terms: terms.map((t) => {
-			const stat = statByKey.get(`${area.area_id}:${t.term_id}`);
-			return {
-				term_id: t.term_id,
-				term_name: t.term_name,
-				distributed_total: stat?.distributed_total ?? 0,
-				distribution_rate: stat?.distribution_rate ?? 0,
-			};
-		}),
-	}));
+	const areas = areaRows.map((area) => {
+		const stat = statByAreaId.get(area.area_id);
+		return {
+			...area,
+			assignee_name: stat?.assignee_name ?? '',
+			distributed_total: stat?.distributed_total ?? 0,
+			distribution_rate: stat?.distribution_rate ?? 0,
+		};
+	});
 
-	return { areas, terms };
+	return { areas, term };
 }
 
-export async function listAreasWithRecentTerms(env: AreasEnv): Promise<Response> {
-	const { areas, terms } = await areasWithRecentTermStats(env);
-	return Response.json({ areas, terms });
+export async function listAreasWithCurrentTerm(env: AreasEnv): Promise<Response> {
+	const { areas, term } = await areasWithCurrentTermStats(env);
+	return Response.json({ areas, term });
 }
 
 export async function exportAreasCsv(env: AreasEnv): Promise<Response> {
-	const { areas, terms } = await areasWithRecentTermStats(env);
-	const headers = ['area_id', '市区町村', '区', '町丁目', '丁目', '区画', '世帯数'];
-	for (const t of terms) {
-		headers.push(`${t.term_name}_配布数`, `${t.term_name}_配布率(%)`);
-	}
-	const rows = areas.map((area) => {
-		const row: (string | number)[] = [area.area_id, area.city, area.ward, area.town, area.chome, area.block, area.num_households];
-		for (const t of area.terms) {
-			row.push(t.distributed_total, t.distribution_rate);
-		}
-		return row;
-	});
+	const { areas } = await areasWithCurrentTermStats(env);
+	const headers = ['area_id', '市区町村', '区', '町丁目', '丁目', '区画', '世帯数', '対象', 'エリア担当', '担当', '配布数', '配布率(%)'];
+	const rows = areas.map((area) => [
+		area.area_id,
+		area.city,
+		area.ward,
+		area.town,
+		area.chome,
+		area.block,
+		area.num_households,
+		area.area_manager_id ? 1 : 0,
+		area.area_manager_name,
+		area.assignee_name,
+		area.distributed_total,
+		area.distribution_rate,
+	]);
 	return csvResponse(toCsv(headers, rows), 'areas.csv');
 }
 

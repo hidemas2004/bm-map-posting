@@ -41,8 +41,9 @@ const MASKED_FILL_OPACITY = 0.65;
 const ZERO_HOUSEHOLD_FILL_COLOR = '#4b5563';
 const ZERO_HOUSEHOLD_FILL_OPACITY = 0.65;
 
-// 担当者フィルタの「担当者未決」選択時の内部値（実在のuser_idと衝突しないダミー値）
-const UNASSIGNED_FILTER_VALUE = '__unassigned__';
+// エリア担当が未設定の区画の塗り（予定配布エリア外であることを示す。他の色と見分けやすい黄色系）
+const NON_TARGET_FILL_COLOR = '#eab308';
+const NON_TARGET_FILL_OPACITY = 0.45;
 
 // GPS現在地マーカー
 const GPS_DOT_COLOR = '#2563eb';

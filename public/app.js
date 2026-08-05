@@ -15,7 +15,7 @@ const state = {
 	activeUsers: [],
 	watchId: null,
 	gpsMarker: null,
-	assigneeFilter: '', // ''=全体表示、UNASSIGNED_FILTER_VALUE=担当者未決、それ以外はuser_id
+	assigneeFilter: '', // ''=全体表示、それ以外はuser_id
 };
 
 async function apiFetch(path, options = {}) {
@@ -65,7 +65,6 @@ function weightForZoom(baseWeight) {
 /** 担当者フィルタ選択中の行が「ハイライト対象（＝グレーアウトしない）」かどうか */
 function matchesAssigneeFilter(row, filter) {
 	if (!filter) return true; // 全体表示＝フィルタなし
-	if (filter === UNASSIGNED_FILTER_VALUE) return !row.assignee_id;
 	return row.assignee_id === filter;
 }
 
@@ -89,12 +88,24 @@ function styleForArea(areaId) {
 		};
 	}
 
+	// 担当者フィルタで特定の担当者が選ばれている場合、その担当者以外のエリアは
+	// （エリア担当未設定=黄色 のエリアも含めて）すべて世帯ゼロと同じ濃さのグレーにする。
 	if (!matchesAssigneeFilter(row, state.assigneeFilter)) {
 		return {
 			color: UNASSIGNED_BOUNDARY_COLOR,
 			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
 			fillColor: MASKED_FILL_COLOR,
 			fillOpacity: MASKED_FILL_OPACITY,
+		};
+	}
+
+	// エリア担当が未設定の区画は予定配布エリア外。フィルタ状態に関わらず常にグレー固定。
+	if (!row.area_manager_id) {
+		return {
+			color: UNASSIGNED_BOUNDARY_COLOR,
+			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
+			fillColor: NON_TARGET_FILL_COLOR,
+			fillOpacity: NON_TARGET_FILL_OPACITY,
 		};
 	}
 
@@ -123,24 +134,36 @@ function redrawStyles() {
 
 map.on('zoomend', redrawStyles);
 
-/** ヘッダの世帯数・配布数・配布率を、現在の担当者フィルタに応じて集計・表示する。 */
+/**
+ * ヘッダの全世帯・予定世帯・配布数・予定達成率を集計・表示する。
+ * 全世帯のみ担当者フィルタの影響を受けない。予定世帯・配布数・予定達成率は
+ * 担当者フィルタに連動し、特定の担当者を選ぶと「その人の予定に対する達成率」になる
+ * （予定達成率の分母はフィルタ後の予定世帯）。
+ */
 function updateHeaderStats() {
-	let households = 0;
+	let totalHouseholds = 0;
+	let plannedHouseholds = 0;
 	let distributed = 0;
 
-	if (state.assigneeFilter !== UNASSIGNED_FILTER_VALUE) {
-		for (const row of state.termDataByAreaId.values()) {
-			if (!matchesAssigneeFilter(row, state.assigneeFilter)) continue;
-			households += row.num_households;
-			distributed += row.distributed_total;
-		}
+	for (const row of state.termDataByAreaId.values()) {
+		totalHouseholds += row.num_households;
 	}
-	// 「(担当者未決)」選択時は要件により明示的に0/0/0%固定（householdsは0のまま）
 
-	const rate = households > 0 ? (distributed / households) * 100 : 0;
-	document.getElementById('stat-households').textContent = households.toLocaleString('ja-JP');
+	for (const row of state.termDataByAreaId.values()) {
+		if (!matchesAssigneeFilter(row, state.assigneeFilter)) continue;
+		if (!row.area_manager_id) continue; // 予定配布エリア(エリア担当設定済み)のみ集計
+		plannedHouseholds += row.num_households;
+		distributed += row.distributed_total;
+	}
+
+	const plannedRatio = totalHouseholds > 0 ? Math.round((plannedHouseholds / totalHouseholds) * 100) : 0;
+	const achievementRate = plannedHouseholds > 0 ? Math.round((distributed / plannedHouseholds) * 100) : 0;
+
+	document.getElementById('stat-total-households').textContent = totalHouseholds.toLocaleString('ja-JP');
+	document.getElementById('stat-planned-households').textContent =
+		`${plannedHouseholds.toLocaleString('ja-JP')}(${plannedRatio}%)`;
 	document.getElementById('stat-distributed').textContent = distributed.toLocaleString('ja-JP');
-	document.getElementById('stat-rate').textContent = `${rate.toFixed(1)}%`;
+	document.getElementById('stat-achievement-rate').textContent = `${achievementRate}%`;
 }
 
 function populateAssigneeFilterSelect() {
@@ -151,11 +174,6 @@ function populateAssigneeFilterSelect() {
 	optAll.value = '';
 	optAll.textContent = '(全体表示)';
 	select.appendChild(optAll);
-
-	const optUnassigned = document.createElement('option');
-	optUnassigned.value = UNASSIGNED_FILTER_VALUE;
-	optUnassigned.textContent = '(担当者未決)';
-	select.appendChild(optUnassigned);
 
 	for (const user of state.activeUsers) {
 		const option = document.createElement('option');
@@ -223,17 +241,24 @@ function buildPopupContent(row, layer) {
 	L.DomEvent.disableClickPropagation(container);
 
 	const isZeroHousehold = row.num_households === 0;
-	const canEditAssignee = !state.viewOnly && !isZeroHousehold;
+	const isNonTarget = !row.area_manager_id;
+	const canEditAreaManager = !state.viewOnly;
+	const canEditAssignee = !state.viewOnly && !isZeroHousehold && !isNonTarget;
 	const rateDisplay = row.distribution_rate.toFixed(1);
 	const barWidth = Math.min(row.distribution_rate, 100);
 
 	container.innerHTML = `
 		<div class="title">${areaTitle(row)}</div>
 		<div class="assignee-row">
+			<span>エリア担当: ${row.area_manager_name || '未設定'}</span>
+			${canEditAreaManager ? '<button type="button" data-action="edit-area-manager">変更する</button>' : ''}
+		</div>
+		${isNonTarget ? '<p class="zero-household-note">エリア担当が未設定のため、担当者設定・配布記録の対象外です。</p>' : ''}
+		<div class="assignee-row">
 			<span>担当者: ${row.assignee_name || '未担当'}</span>
 			${canEditAssignee ? '<button type="button" data-action="edit-assignee">変更する</button>' : ''}
 		</div>
-		${isZeroHousehold ? '<p class="zero-household-note">世帯数が0のため、担当者設定・配布記録の対象外です。</p>' : ''}
+		${!isNonTarget && isZeroHousehold ? '<p class="zero-household-note">世帯数が0のため、担当者設定・配布記録の対象外です。</p>' : ''}
 		<div class="row"><span>世帯数:</span><span>${row.num_households.toLocaleString('ja-JP')} 世帯</span></div>
 		<div class="row"><span>累計配布:</span><span>${row.distributed_total.toLocaleString('ja-JP')} 枚</span></div>
 		<div class="row"><span>配布率:</span><span>${rateDisplay}%</span></div>
@@ -287,6 +312,62 @@ function buildPopupContent(row, layer) {
 			layer.getPopup().update();
 		});
 	}
+
+	if (canEditAreaManager) {
+		const areaManagerEditButton = container.querySelector('[data-action="edit-area-manager"]');
+		areaManagerEditButton.addEventListener('click', () => {
+			layer.setPopupContent(buildAreaManagerEditContent(row, layer));
+			layer.getPopup().update();
+		});
+	}
+
+	return container;
+}
+
+function buildAreaManagerEditContent(row, layer) {
+	const container = document.createElement('div');
+	container.className = 'popup-content assignee-edit';
+	L.DomEvent.disableClickPropagation(container);
+
+	const options = ['<option value="">未設定</option>']
+		.concat(state.activeUsers.map((u) => `<option value="${u.user_id}">${u.name}</option>`))
+		.join('');
+
+	container.innerHTML = `
+		<div class="title">エリア担当を設定</div>
+		<p class="hint">同じエリア(丁目)内の全区画に反映されます。担当者未設定の区画には担当者としても反映されます。</p>
+		<select data-role="area-manager-select">${options}</select>
+		<p class="error" data-role="area-manager-error"></p>
+		<div class="actions">
+			<button type="button" data-action="cancel">キャンセル</button>
+			<button type="button" data-action="save">設定する</button>
+		</div>
+	`;
+	container.querySelector('[data-role="area-manager-select"]').value = row.area_manager_id ?? '';
+
+	container.querySelector('[data-action="cancel"]').addEventListener('click', () => {
+		layer.setPopupContent(buildPopupContent(row, layer));
+		layer.getPopup().update();
+	});
+	container.querySelector('[data-action="save"]').addEventListener('click', async () => {
+		const select = container.querySelector('[data-role="area-manager-select"]');
+		const errorEl = container.querySelector('[data-role="area-manager-error"]');
+		const res = await apiFetch('/api/area-manager', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ area_id: row.area_id, area_manager_id: select.value || null }),
+		});
+		const data = await res.json();
+		if (!res.ok) {
+			errorEl.textContent = data.error ?? '設定に失敗しました';
+			return;
+		}
+		// 同一エリア内の複数区画が一括更新されるため、現タームのデータを丸ごと再取得して反映する
+		await selectTerm(state.currentTermId);
+		const updatedRow = state.termDataByAreaId.get(row.area_id);
+		layer.setPopupContent(buildPopupContent(updatedRow, layer));
+		layer.getPopup().update();
+	});
 
 	return container;
 }

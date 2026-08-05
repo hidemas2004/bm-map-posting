@@ -28,18 +28,21 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	}
 
 	const row = await env.DB.prepare(
-		`SELECT term_data.id, term_data.distributed_total, areas.num_households
+		`SELECT term_data.id, term_data.distributed_total, areas.num_households, areas.area_manager_id
 		 FROM term_data JOIN areas ON areas.area_id = term_data.area_id
 		 WHERE term_data.term_id = ? AND term_data.area_id = ?`,
 	)
 		.bind(termId, areaId)
-		.first<{ id: number; distributed_total: number; num_households: number }>();
+		.first<{ id: number; distributed_total: number; num_households: number; area_manager_id: string | null }>();
 
 	if (!row) {
 		return Response.json({ error: '指定されたターム・エリアの組み合わせが見つかりません' }, { status: 404 });
 	}
 	if (row.num_households === 0) {
 		return Response.json({ error: '世帯数が0のためこのエリアは配布記録の対象外です' }, { status: 400 });
+	}
+	if (!row.area_manager_id) {
+		return Response.json({ error: 'エリア担当が未設定のためこのエリアは配布記録の対象外です' }, { status: 400 });
 	}
 
 	const newTotal = row.distributed_total + delta;
@@ -67,6 +70,7 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 
 	const updated = await env.DB.prepare(
 		`SELECT areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.block, areas.num_households,
+			areas.area_manager_id, areas.area_manager_name,
 			term_data.assignee_id, term_data.assignee_name, term_data.distributed_total,
 			term_data.distribution_rate, term_data.last_updated_at
 		 FROM term_data JOIN areas ON areas.area_id = term_data.area_id
@@ -90,14 +94,17 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 		return Response.json({ error: 'term_id, area_id を指定してください' }, { status: 400 });
 	}
 
-	const area = await env.DB.prepare('SELECT num_households FROM areas WHERE area_id = ?')
+	const area = await env.DB.prepare('SELECT num_households, area_manager_id FROM areas WHERE area_id = ?')
 		.bind(areaId)
-		.first<{ num_households: number }>();
+		.first<{ num_households: number; area_manager_id: string | null }>();
 	if (!area) {
 		return Response.json({ error: '指定されたエリアが見つかりません' }, { status: 404 });
 	}
 	if (area.num_households === 0) {
 		return Response.json({ error: '世帯数が0のためこのエリアには担当者を設定できません' }, { status: 400 });
+	}
+	if (!area.area_manager_id) {
+		return Response.json({ error: 'エリア担当が未設定のためこのエリアには担当者を設定できません' }, { status: 400 });
 	}
 
 	let assigneeName = '';
@@ -123,6 +130,7 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 
 	const updated = await env.DB.prepare(
 		`SELECT areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.block, areas.num_households,
+			areas.area_manager_id, areas.area_manager_name,
 			term_data.assignee_id, term_data.assignee_name, term_data.distributed_total,
 			term_data.distribution_rate, term_data.last_updated_at
 		 FROM term_data JOIN areas ON areas.area_id = term_data.area_id
@@ -132,4 +140,70 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 		.first();
 
 	return Response.json(updated);
+}
+
+/**
+ * エリア担当（town+chome単位）を設定する。同一エリア内の全区画（世帯数0を含む）の
+ * area_manager_id/area_manager_name を一括更新し、エリア担当を設定した場合はさらに
+ * 現在進行中タームの担当者(term_data.assignee)が未設定の区画（世帯数>0のもの）へ
+ * 一括反映する（既に担当者が設定されている区画は変更しない）。
+ * エリア担当を未設定(null)に戻す場合は area_manager のみ更新し、担当者の一括反映は行わない。
+ */
+export async function setAreaManager(request: Request, env: RecordsEnv): Promise<Response> {
+	const body = await request
+		.json<{ area_id?: string; area_manager_id?: string | null }>()
+		.catch(() => ({}) as { area_id?: string; area_manager_id?: string | null });
+	const areaId = String(body.area_id ?? '');
+	const areaManagerId = body.area_manager_id ?? null;
+
+	if (!areaId) {
+		return Response.json({ error: 'area_id を指定してください' }, { status: 400 });
+	}
+
+	const area = await env.DB.prepare('SELECT town, chome FROM areas WHERE area_id = ?')
+		.bind(areaId)
+		.first<{ town: string; chome: string }>();
+	if (!area) {
+		return Response.json({ error: '指定されたエリアが見つかりません' }, { status: 404 });
+	}
+
+	let areaManagerName = '';
+	if (areaManagerId) {
+		const manager = await env.DB.prepare('SELECT name FROM users WHERE user_id = ? AND active = 1')
+			.bind(areaManagerId)
+			.first<{ name: string }>();
+		if (!manager) {
+			return Response.json({ error: '指定されたエリア担当が見つかりません' }, { status: 400 });
+		}
+		areaManagerName = manager.name;
+	}
+
+	await env.DB.prepare('UPDATE areas SET area_manager_id = ?, area_manager_name = ? WHERE town = ? AND chome = ?')
+		.bind(areaManagerId, areaManagerName, area.town, area.chome)
+		.run();
+
+	if (areaManagerId) {
+		const activeTerm = await env.DB.prepare("SELECT term_id FROM terms WHERE status = '進行中'").first<{
+			term_id: number;
+		}>();
+		if (activeTerm) {
+			await env.DB.prepare(
+				`UPDATE term_data SET assignee_id = ?, assignee_name = ?
+				 WHERE term_id = ? AND assignee_id IS NULL
+				   AND area_id IN (SELECT area_id FROM areas WHERE town = ? AND chome = ? AND num_households > 0)`,
+			)
+				.bind(areaManagerId, areaManagerName, activeTerm.term_id, area.town, area.chome)
+				.run();
+		}
+	}
+
+	const { results: updatedAreas } = await env.DB.prepare('SELECT area_id FROM areas WHERE town = ? AND chome = ?')
+		.bind(area.town, area.chome)
+		.all<{ area_id: string }>();
+
+	return Response.json({
+		area_manager_id: areaManagerId,
+		area_manager_name: areaManagerName,
+		updated_area_ids: updatedAreas.map((r) => r.area_id),
+	});
 }

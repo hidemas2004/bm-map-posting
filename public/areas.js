@@ -23,8 +23,8 @@ async function apiFetch(path, options = {}) {
 	return res;
 }
 
-const BASE_HEADERS = ['area_id', '市区町村', '区', '町丁目', '丁目', '区画', '世帯数'];
-const FROZEN_COL_COUNT = BASE_HEADERS.length; // area_id〜世帯数までを列固定
+const BASE_HEADERS = ['町丁目', '区画', 'エリア担当', '担当', '世帯数', '配布数', '配布率'];
+const FROZEN_COL_COUNT = 2; // 町丁目・区画を列固定
 
 /**
  * 先頭N列を横スクロール時も固定表示する。テーブルは列ごとに幅が揃う（table auto layout）ため、
@@ -54,39 +54,32 @@ function addCell(row, text, tag) {
 	row.appendChild(cell);
 }
 
-function buildHeaderRow(terms) {
+function buildHeaderRow() {
 	const tr = document.createElement('tr');
 	for (const label of BASE_HEADERS) addCell(tr, label, 'th');
-	for (const term of terms) {
-		addCell(tr, `${term.term_name} 配布数`, 'th');
-		addCell(tr, `${term.term_name} 配布率`, 'th');
-	}
 	return tr;
 }
 
 function buildDataRow(area) {
 	const tr = document.createElement('tr');
-	addCell(tr, area.area_id, 'td');
-	addCell(tr, area.city, 'td');
-	addCell(tr, area.ward, 'td');
-	addCell(tr, area.town, 'td');
-	addCell(tr, area.chome, 'td');
+	const townChome = `${area.town}${area.chome ? `${area.chome}丁目` : ''}`;
+	addCell(tr, townChome, 'td');
 	addCell(tr, area.block, 'td');
+	addCell(tr, area.area_manager_name, 'td');
+	addCell(tr, area.assignee_name, 'td');
 	addCell(tr, area.num_households.toLocaleString('ja-JP'), 'td');
-	for (const t of area.terms) {
-		addCell(tr, t.distributed_total.toLocaleString('ja-JP'), 'td');
-		addCell(tr, `${t.distribution_rate.toFixed(1)}%`, 'td');
-	}
+	addCell(tr, area.distributed_total.toLocaleString('ja-JP'), 'td');
+	addCell(tr, `${area.distribution_rate.toFixed(1)}%`, 'td');
 	return tr;
 }
 
 async function loadAreas() {
 	const res = await apiFetch('/api/areas/with-terms');
-	const { areas, terms } = await res.json();
+	const { areas } = await res.json();
 
 	const thead = document.getElementById('areas-thead');
 	thead.innerHTML = '';
-	thead.appendChild(buildHeaderRow(terms));
+	thead.appendChild(buildHeaderRow());
 
 	const tbody = document.getElementById('areas-tbody');
 	tbody.innerHTML = '';
@@ -94,7 +87,7 @@ async function loadAreas() {
 		const tr = document.createElement('tr');
 		const td = document.createElement('td');
 		td.className = 'empty-row';
-		td.colSpan = BASE_HEADERS.length + terms.length * 2;
+		td.colSpan = BASE_HEADERS.length;
 		td.textContent = '地域データがありません';
 		tr.appendChild(td);
 		tbody.appendChild(tr);

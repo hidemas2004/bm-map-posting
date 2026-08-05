@@ -1,8 +1,8 @@
 import { handleLogin, requireAdmin, requireAuth, type AuthEnv } from './auth';
 import { exportUsersCsv, importUsers, listActiveUsers, listUsers, type UsersEnv } from './users';
-import { exportAreasCsv, importAreas, listAreas, listAreasWithRecentTerms, type AreasEnv } from './areas';
+import { exportAreasCsv, importAreas, listAreas, listAreasWithCurrentTerm, type AreasEnv } from './areas';
 import { createNewTerm, getTermData, listTerms, type TermsEnv } from './terms';
-import { recordDistribution, setAssignee, type RecordsEnv } from './records';
+import { recordDistribution, setAreaManager, setAssignee, type RecordsEnv } from './records';
 import { exportActivityLogCsv, listActivityLog, type ActivityLogEnv } from './activity_log';
 
 export interface Env extends AuthEnv, UsersEnv, AreasEnv, TermsEnv, RecordsEnv, ActivityLogEnv {
@@ -35,7 +35,7 @@ export default {
 				return listAreas(env);
 			}
 			if (url.pathname === '/api/areas/with-terms' && request.method === 'GET') {
-				return listAreasWithRecentTerms(env);
+				return listAreasWithCurrentTerm(env);
 			}
 			if (url.pathname === '/api/areas/export' && request.method === 'GET') {
 				return exportAreasCsv(env);
@@ -90,6 +90,9 @@ export default {
 			}
 			if (url.pathname === '/api/assignee' && request.method === 'POST') {
 				return setAssignee(request, env);
+			}
+			if (url.pathname === '/api/area-manager' && request.method === 'POST') {
+				return setAreaManager(request, env);
 			}
 
 			return Response.json({ error: 'Not Found' }, { status: 404 });
