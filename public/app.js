@@ -1,4 +1,5 @@
 const SESSION_KEY = 'bm_posting_session';
+const MAP_VIEW_FILTER = '__map_view__'; // 担当者フィルタの特殊値。選択時は全区画を境界線のみ（塗りつぶしなし）で表示する。
 
 const sessionRaw = sessionStorage.getItem(SESSION_KEY);
 if (!sessionRaw) {
@@ -73,11 +74,19 @@ function weightForZoom(baseWeight) {
 
 /** 担当者フィルタ選択中の行が「ハイライト対象（＝グレーアウトしない）」かどうか */
 function matchesAssigneeFilter(row, filter) {
-	if (!filter) return true; // 全体表示＝フィルタなし
+	if (!filter || filter === MAP_VIEW_FILTER) return true; // 全体表示・地図表示＝フィルタなし
 	return row.assignee_id === filter;
 }
 
 function styleForArea(areaId) {
+	if (state.assigneeFilter === MAP_VIEW_FILTER) {
+		return {
+			color: UNASSIGNED_BOUNDARY_COLOR,
+			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
+			fillOpacity: 0,
+		};
+	}
+
 	const row = state.termDataByAreaId.get(areaId);
 	if (!row) {
 		return {
@@ -182,6 +191,11 @@ function populateAssigneeFilterSelect() {
 	const select = document.getElementById('assignee-filter');
 	select.innerHTML = '';
 
+	const optMapView = document.createElement('option');
+	optMapView.value = MAP_VIEW_FILTER;
+	optMapView.textContent = '(地図表示)';
+	select.appendChild(optMapView);
+
 	const optAll = document.createElement('option');
 	optAll.value = '';
 	optAll.textContent = '(全体表示)';
@@ -193,6 +207,8 @@ function populateAssigneeFilterSelect() {
 		option.textContent = user.name;
 		select.appendChild(option);
 	}
+
+	select.value = state.assigneeFilter;
 }
 
 document.getElementById('assignee-filter').addEventListener('change', (e) => {
