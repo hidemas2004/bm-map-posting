@@ -52,3 +52,6 @@ const NON_TARGET_FILL_OPACITY = 0.7;
 // GPS現在地マーカー
 const GPS_DOT_COLOR = '#2563eb';
 const GPS_DOT_RADIUS_PX = 8;
+
+// 投票所ピン（しずく型・紺色。丁目境界と同じ色でエリア外の重要地点であることを示す）
+const POLLING_STATION_PIN_COLOR = '#1e3a8a';
