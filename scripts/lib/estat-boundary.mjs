@@ -63,7 +63,7 @@ export function splitCityWard(cityName) {
 	return { city: cityName, ward: '' };
 }
 
-function toPolygonList(geometry) {
+export function toPolygonList(geometry) {
 	if (geometry.type === 'Polygon') return [geometry.coordinates];
 	if (geometry.type === 'MultiPolygon') return geometry.coordinates;
 	throw new Error(`未対応のgeometry.type: ${geometry.type}`);
@@ -104,6 +104,9 @@ export function buildAreasSql(regionLabel, areas, warnings = []) {
 		'-- block は同一丁目内で基本単位区が複数に分かれる場合の区別用通し番号（area_idをソートして',
 		'--   採番。e-Statの公式な区画番号ではなく本システム独自の表示用連番）。1区画のみの丁目では空欄。',
 		'-- num_households は同データのSETAI（世帯数）列の実数値（概算ではない）。',
+		'-- chome_area_id は区画が属する「エリア」（boundary_chome.geojsonの境界ポリゴン）のarea_id。',
+		'--   本スクリプトはチョーム境界データを取得しないため暫定的に自分自身のarea_idを設定する',
+		'--   （1区画=1エリア扱い）。実際のチョーム単位への統合は scripts/backfill-chome-area-id.mjs 参照。',
 	];
 	if (warnings.length > 0) {
 		lines.push('--', '-- 【要確認】');
@@ -115,10 +118,10 @@ export function buildAreasSql(regionLabel, areas, warnings = []) {
 	// AREAS_SQL_CHUNK_SIZE件ごとに複数のINSERT文に分割する。
 	for (let i = 0; i < areas.length; i += AREAS_SQL_CHUNK_SIZE) {
 		const chunk = areas.slice(i, i + AREAS_SQL_CHUNK_SIZE);
-		lines.push('INSERT INTO areas (area_id, city, ward, town, chome, block, num_households) VALUES');
+		lines.push('INSERT INTO areas (area_id, city, ward, town, chome, block, num_households, chome_area_id) VALUES');
 		const values = chunk.map((a, j) => {
 			const comma = j === chunk.length - 1 ? ';' : ',';
-			return `  ('${a.area_id}', '${escapeSql(a.city)}', '${escapeSql(a.ward)}', '${escapeSql(a.town)}', '${escapeSql(a.chome)}', '${escapeSql(a.block)}', ${a.num_households})${comma}`;
+			return `  ('${a.area_id}', '${escapeSql(a.city)}', '${escapeSql(a.ward)}', '${escapeSql(a.town)}', '${escapeSql(a.chome)}', '${escapeSql(a.block)}', ${a.num_households}, '${escapeSql(a.chome_area_id)}')${comma}`;
 		});
 		lines.push(...values);
 	}
@@ -170,7 +173,11 @@ export function extractMunicipality(featureCollection, cityName) {
 			warnings.push(`area_id=${keyCode} (${town}${chome}): ${features.length}個のポリゴンをMultiPolygonに統合しました`);
 		}
 
-		areas.push({ area_id: keyCode, city, ward, town, chome, block: '', num_households: totalHouseholds });
+		// chome_area_id: 本来は町丁・字等（チョーム）境界データとの空間結合で求めるべきだが、
+		// 現状このスクリプトは基本単位区データしか取得しないため、暫定的に自分自身のarea_idを
+		// 割り当てる（1区画=1エリアとして振る舞う、安全なデフォルト。既存動作からの後退にはならない）。
+		// 大和市の実際のチョーム単位への統合は scripts/backfill-chome-area-id.mjs が別途行う。
+		areas.push({ area_id: keyCode, city, ward, town, chome, block: '', num_households: totalHouseholds, chome_area_id: keyCode });
 		mergedFeatures.push({
 			type: 'Feature',
 			properties: { area_id: keyCode, city, ward, town, chome, block: '' },

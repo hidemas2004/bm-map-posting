@@ -27,6 +27,14 @@
   どの丁目に属するかが見た目でも分かるよう、旧丁目境界を`public/data/boundary_chome.geojson`
   として保持し、地図上に表示専用（太め・紺色・クリック不可）の補助レイヤーとして重ね描きしている
   （`public/config.js`の`CHOME_BOUNDARY_*`定数、`app.js`の`loadChomeBoundary()`）。
+- 「エリア」（エリア担当の設定単位）は`areas.chome_area_id`列（`boundary_chome.geojson`の各境界
+  ポリゴンが持つe-Stat KEY_CODEをそのまま転用）で識別する。区画がどの境界ポリゴンに属するかは、
+  区画データと`boundary_chome.geojson`の空間結合（点-in-ポリゴン判定、`scripts/lib/geo.mjs`）で
+  算出する。旧仕様では`town`+`chome`の文字列一致で識別していたが、e-Statが同一町名を複数の
+  KEY_CODEに分割しているケース（丁目のない大字。大和市では下鶴間・深見・福田・上和田・下和田が
+  該当）を区別できず、地図上は別々の境界線を持つエリアが1つの巨大なエリアとして誤認識される
+  不具合があったため issue#12 で変更した（`migrations/0004_chome_area_id.sql`、
+  `scripts/backfill-chome-area-id.mjs`）。
 - 地図画面（`public/index.html` / `app.js`）のヘッダは選択タームの全体集計（世帯数・配布数・
   配布率）と担当者フィルタ（`(全体表示)` / `(担当者未決)` / 各担当者）を表示する。担当者フィルタで
   選択中以外のエリアは濃い灰色でマスクされる。世帯数0のエリア（2026-08-05時点で172地域。基本単位区
@@ -48,9 +56,18 @@ npx wrangler deploy   # 本番デプロイ（要 Cloudflare 認証・D1本番デ
 ```bash
 npx wrangler d1 execute bm-posting-db --local --file=migrations/0001_init.sql
 npx wrangler d1 execute bm-posting-db --local --file=migrations/0002_areas_block_level.sql
+npx wrangler d1 execute bm-posting-db --local --file=migrations/0003_area_manager.sql
+npx wrangler d1 execute bm-posting-db --local --file=migrations/0004_chome_area_id.sql
 npx wrangler d1 execute bm-posting-db --local --file=seed/areas_yamato.sql
 npx wrangler d1 execute bm-posting-db --local --file=seed/users.sql
 ```
+
+`seed/areas_yamato.sql`は`chome_area_id`列を含む形で生成済みのため、上記の順序（0004適用後に投入）
+であれば`migrations/0005_backfill_chome_area_id_yamato.sql`は不要（新規まっさらなDBのみを対象とする
+場合）。**既にデータが入っている既存DB**（本番等）に`chome_area_id`を反映する場合は、`seed/areas_yamato.sql`
+を再投入せず、0004適用後に`migrations/0005_backfill_chome_area_id_yamato.sql`を実行すること
+（`area_id`等は変更せず`chome_area_id`列のみを更新するUPDATE文のため、`area_manager_id`等の
+既存運用データを壊さない）。
 
 ## シークレット・環境変数
 
@@ -75,7 +92,7 @@ curl -X POST https://<デプロイ先ホスト>/api/areas/import \
   -d '{
     "areas": [
       { "area_id": "142131541101", "city": "大和市", "ward": "",
-        "town": "中央林間", "chome": "1", "block": "1", "num_households": 22 }
+        "town": "中央林間", "chome": "1", "chome_area_id": "14213154101", "block": "1", "num_households": 22 }
     ]
   }'
 ```
@@ -85,6 +102,9 @@ curl -X POST https://<デプロイ先ホスト>/api/areas/import \
   （既存 area_id の `term_data`・実績値は変更しない）。
 - `area_id` / `city` / `num_households`（数値）は必須。`ward`（区を持たない市区町村では空文字）/
   `town` / `chome` / `block`（同一丁目内で基本単位区が複数に分かれる場合の区別用通し番号）は省略可。
+- `chome_area_id`（区画が属する「エリア」のID。`boundary_chome.geojson`のarea_idを想定）も省略可。
+  省略時はサーバ側で自身の`area_id`にフォールバックする（空文字にはしない。複数区画が意図せず
+  同一エリア扱いになる事故を防ぐため。詳細はissue#12）。
 
 ## 履歴・地域マスタの閲覧とCSVエクスポート
 
@@ -163,11 +183,22 @@ CSVダウンロードに対応している（スプレッドシートでの目�
      いることがある（大和市では基本単位区レベルで0件だったが、他市区町村では起こりうる）。
      `area_id` はDB側でPRIMARY KEYのため、世帯数を合算し、ジオメトリはMultiPolygonとして
      1レコードにマージする必要がある。
+   - `chome_area_id`（区画が属する「エリア」のID）→ 本スクリプトは基本単位区データしか
+     取得しないため、暫定的に自分自身の`area_id`を設定する（1区画=1エリア扱い）。
 4. **投入**: 整形したデータを `POST /api/areas/import` へPOST（本APIの仕様は下記参照）。
    併せて `seed/areas_<市区町村名>.sql` としてSQLも保存しておくと、DBを作り直しても
    再現できる。
 5. **境界GeoJSONへのマージ**: 抽出したfeatureを `public/data/boundary.geojson` の
    `features` 配列に追記する（`area_id` の重複がないことを確認）。
+
+**今後の課題（issue#12関連）**: 上記手順では`chome_area_id`が暫定的に自分自身の`area_id`に
+なる（1区画=1エリア扱い）ため、大和市のように「エリア」を町丁・字等単位でまとめる運用はできない。
+大和市の`boundary_chome.geojson`は格上げ前データの遺物として例外的に存在するだけで、他市区町村を
+追加する現行フローには町丁・字等境界データ（`dlserveyId=A002005212020`、都道府県単位ダウンロード）
+の取得手順が無い。同じ「エリア」概念を他市区町村でも使う場合は、この取得手順と
+`scripts/lib/geo.mjs`（空間結合）を`scripts/lib/estat-boundary.mjs`/`new-region.mjs`に
+組み込む対応が別途必要（大和市データの`chome_area_id`算出は`scripts/backfill-chome-area-id.mjs`
+参照）。
 
 上記1〜3は `scripts/lib/estat-boundary.mjs` としてスクリプト化済み。単体実行する場合は
 
@@ -292,6 +323,33 @@ npx wrangler deploy   # public/data/boundary.geojson を新データに合わせ
 コードデプロイとDB入れ替え（手順2・3）は同時に行うこと（`boundary.geojson`とD1の`areas`が
 食い違う時間帯を作らないため）。`--local`環境で一連の手順をリハーサルしてから本番に適用する。
 
+### chome_area_id列の追加・バックフィル（issue#12対応、2026-08）
+
+`areas.chome_area_id`列の追加は、`area_id`自体を変更しない列追加＋既存行のUPDATEのみのため、
+上記「基本単位区への切替え」のような全データ削除は不要。
+
+```bash
+# 事前バックアップ（万一のロールバック用）
+npx wrangler d1 export bm-posting-db --remote --output=backup_before_chome_area_id.sql
+
+# 1. スキーマ変更（列追加。既存データに影響なし）
+npx wrangler d1 execute bm-posting-db --remote --file=migrations/0004_chome_area_id.sql
+# 2. 実値バックフィル（areas.chome_area_idのみ更新。term_data/activity_logは無関係）
+npx wrangler d1 execute bm-posting-db --remote --file=migrations/0005_backfill_chome_area_id_yamato.sql
+
+# 3. コードデプロイ（バックフィル完了後に実施すること）
+npx wrangler deploy
+```
+
+**手順1・2完了後に手順3を行うこと。** コードを先にデプロイすると、バックフィル未実施の区画は
+`chome_area_id=''`のままになり、空文字同士が全区画で1エリア扱いになる（issue#12と同種、
+より深刻な）事故につながる。`--local`環境で一連の手順をリハーサルしてから本番に適用する。
+
+デプロイ後、下鶴間・深見・福田・上和田・下和田で修正前に設定されていた「エリア担当」は、
+旧グルーピング単位のまま新しく分かれた各エリアに同じ担当者名が残る（データは壊れないが、
+実態としては分割後の複数エリアに同じ担当が入ったままになる）。管理者が該当5町のエリア担当設定を
+目視確認し、必要に応じて個別に設定し直すこと。
+
 ### 初回構築時の手順（参考。再構築が必要になった場合用）
 
 1. `npx wrangler login` でCloudflareアカウントに認証する
@@ -299,8 +357,10 @@ npx wrangler deploy   # public/data/boundary.geojson を新データに合わせ
    `database_id` を実際のIDに置き換える
 3. 本番D1へマイグレーション・シードを適用する
    （`npx wrangler d1 execute bm-posting-db --remote --file=migrations/0001_init.sql`、
-   `migrations/0002_areas_block_level.sql`、`seed/areas_yamato.sql`、`seed/users.sql` の順に
-   `--remote` フラグを付けて適用）
+   `migrations/0002_areas_block_level.sql`、`migrations/0003_area_manager.sql`、
+   `migrations/0004_chome_area_id.sql`、`seed/areas_yamato.sql`、`seed/users.sql` の順に
+   `--remote` フラグを付けて適用。`seed/areas_yamato.sql`は`chome_area_id`列を含む形で生成済み
+   のため`migrations/0005_...`は不要）
 4. `wrangler secret put SESSION_SECRET` / `wrangler secret put AREAS_IMPORT_TOKEN` を設定する
 5. `npx wrangler deploy` で本番デプロイする
 6. ユーザー管理画面（`/users.html`）から`seed/users.sql`のテスト用合言葉を変更する

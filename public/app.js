@@ -39,20 +39,20 @@ function currentTerm() {
 	return state.terms.find((t) => t.term_id === state.currentTermId) ?? null;
 }
 
-/** rowと同じエリア（town+chome）に属する全区画の世帯数合計 */
+/** rowと同じエリア（chome_area_id）に属する全区画の世帯数合計 */
 function areaHouseholdsFor(row) {
 	let total = 0;
 	for (const r of state.termDataByAreaId.values()) {
-		if (r.town === row.town && r.chome === row.chome) total += r.num_households;
+		if (r.chome_area_id === row.chome_area_id) total += r.num_households;
 	}
 	return total;
 }
 
-/** rowと同じエリア（town+chome）に属する全区画の累計配布世帯数合計 */
+/** rowと同じエリア（chome_area_id）に属する全区画の累計配布世帯数合計 */
 function areaDistributedFor(row) {
 	let total = 0;
 	for (const r of state.termDataByAreaId.values()) {
-		if (r.town === row.town && r.chome === row.chome) total += r.distributed_total;
+		if (r.chome_area_id === row.chome_area_id) total += r.distributed_total;
 	}
 	return total;
 }

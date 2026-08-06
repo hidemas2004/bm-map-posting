@@ -69,7 +69,7 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 		.run();
 
 	const updated = await env.DB.prepare(
-		`SELECT areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.block, areas.num_households,
+		`SELECT areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.chome_area_id, areas.block, areas.num_households,
 			areas.area_manager_id, areas.area_manager_name,
 			term_data.assignee_id, term_data.assignee_name, term_data.distributed_total,
 			term_data.distribution_rate, term_data.last_updated_at
@@ -129,7 +129,7 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 	}
 
 	const updated = await env.DB.prepare(
-		`SELECT areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.block, areas.num_households,
+		`SELECT areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.chome_area_id, areas.block, areas.num_households,
 			areas.area_manager_id, areas.area_manager_name,
 			term_data.assignee_id, term_data.assignee_name, term_data.distributed_total,
 			term_data.distribution_rate, term_data.last_updated_at
@@ -143,10 +143,10 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 }
 
 /**
- * エリア担当（town+chome単位）を設定する。同一エリア内の全区画（世帯数0を含む）の
- * area_manager_id/area_manager_name を一括更新し、エリア担当を設定した場合はさらに
- * 現在進行中タームの担当者(term_data.assignee)を、同一エリア内の全区画（世帯数>0のもの）へ
- * 一括反映する（既に担当者が設定されている区画も上書きする）。
+ * エリア担当（chome_area_id単位。boundary_chome.geojsonの境界ポリゴンに対応）を設定する。
+ * 同一エリア内の全区画（世帯数0を含む）の area_manager_id/area_manager_name を一括更新し、
+ * エリア担当を設定した場合はさらに現在進行中タームの担当者(term_data.assignee)を、
+ * 同一エリア内の全区画（世帯数>0のもの）へ一括反映する（既に担当者が設定されている区画も上書きする）。
  * エリア担当を未設定(null)に戻す場合は area_manager のみ更新し、担当者の一括反映は行わない。
  */
 export async function setAreaManager(request: Request, env: RecordsEnv): Promise<Response> {
@@ -160,9 +160,9 @@ export async function setAreaManager(request: Request, env: RecordsEnv): Promise
 		return Response.json({ error: 'area_id を指定してください' }, { status: 400 });
 	}
 
-	const area = await env.DB.prepare('SELECT town, chome, num_households FROM areas WHERE area_id = ?')
+	const area = await env.DB.prepare('SELECT chome_area_id, num_households FROM areas WHERE area_id = ?')
 		.bind(areaId)
-		.first<{ town: string; chome: string; num_households: number }>();
+		.first<{ chome_area_id: string; num_households: number }>();
 	if (!area) {
 		return Response.json({ error: '指定されたエリアが見つかりません' }, { status: 404 });
 	}
@@ -181,8 +181,8 @@ export async function setAreaManager(request: Request, env: RecordsEnv): Promise
 		areaManagerName = manager.name;
 	}
 
-	await env.DB.prepare('UPDATE areas SET area_manager_id = ?, area_manager_name = ? WHERE town = ? AND chome = ?')
-		.bind(areaManagerId, areaManagerName, area.town, area.chome)
+	await env.DB.prepare('UPDATE areas SET area_manager_id = ?, area_manager_name = ? WHERE chome_area_id = ?')
+		.bind(areaManagerId, areaManagerName, area.chome_area_id)
 		.run();
 
 	if (areaManagerId) {
@@ -193,15 +193,15 @@ export async function setAreaManager(request: Request, env: RecordsEnv): Promise
 			await env.DB.prepare(
 				`UPDATE term_data SET assignee_id = ?, assignee_name = ?
 				 WHERE term_id = ?
-				   AND area_id IN (SELECT area_id FROM areas WHERE town = ? AND chome = ? AND num_households > 0)`,
+				   AND area_id IN (SELECT area_id FROM areas WHERE chome_area_id = ? AND num_households > 0)`,
 			)
-				.bind(areaManagerId, areaManagerName, activeTerm.term_id, area.town, area.chome)
+				.bind(areaManagerId, areaManagerName, activeTerm.term_id, area.chome_area_id)
 				.run();
 		}
 	}
 
-	const { results: updatedAreas } = await env.DB.prepare('SELECT area_id FROM areas WHERE town = ? AND chome = ?')
-		.bind(area.town, area.chome)
+	const { results: updatedAreas } = await env.DB.prepare('SELECT area_id FROM areas WHERE chome_area_id = ?')
+		.bind(area.chome_area_id)
 		.all<{ area_id: string }>();
 
 	return Response.json({

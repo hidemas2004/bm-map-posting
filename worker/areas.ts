@@ -11,6 +11,7 @@ interface AreaRow {
 	ward: string;
 	town: string;
 	chome: string;
+	chome_area_id: string;
 	block: string;
 	num_households: number;
 	area_manager_id: string | null;
@@ -81,13 +82,14 @@ export async function listAreasWithCurrentTerm(env: AreasEnv): Promise<Response>
 
 export async function exportAreasCsv(env: AreasEnv): Promise<Response> {
 	const { areas } = await areasWithCurrentTermStats(env);
-	const headers = ['area_id', '市区町村', '区', '町丁目', '丁目', '区画', '世帯数', '対象', 'エリア担当', '担当', '配布数', '配布率(%)'];
+	const headers = ['area_id', '市区町村', '区', '町丁目', '丁目', 'エリアID', '区画', '世帯数', '対象', 'エリア担当', '担当', '配布数', '配布率(%)'];
 	const rows = areas.map((area) => [
 		area.area_id,
 		area.city,
 		area.ward,
 		area.town,
 		area.chome,
+		area.chome_area_id,
 		area.block,
 		area.num_households,
 		area.area_manager_id ? 1 : 0,
@@ -105,6 +107,7 @@ interface ImportArea {
 	ward?: string; // 区を持たない市区町村（政令指定都市以外）では空文字
 	town?: string;
 	chome?: string;
+	chome_area_id?: string; // 区画が属する「エリア」のID（boundary_chome.geojsonのarea_id）。省略時はarea_id自身にフォールバック
 	block?: string; // 同一丁目内で基本単位区が複数に分かれる場合の区別用通し番号（無ければ空文字）
 	num_households: number;
 }
@@ -138,12 +141,22 @@ export async function importAreas(request: Request, env: AreasEnv): Promise<Resp
 
 	const upserts = areas.map((area) =>
 		env.DB.prepare(
-			`INSERT INTO areas (area_id, city, ward, town, chome, block, num_households)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO areas (area_id, city, ward, town, chome, block, num_households, chome_area_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(area_id) DO UPDATE SET
 			   city = excluded.city, ward = excluded.ward, town = excluded.town,
-			   chome = excluded.chome, block = excluded.block, num_households = excluded.num_households`,
-		).bind(area.area_id, area.city, area.ward ?? '', area.town ?? '', area.chome ?? '', area.block ?? '', area.num_households),
+			   chome = excluded.chome, block = excluded.block, num_households = excluded.num_households,
+			   chome_area_id = excluded.chome_area_id`,
+		).bind(
+			area.area_id,
+			area.city,
+			area.ward ?? '',
+			area.town ?? '',
+			area.chome ?? '',
+			area.block ?? '',
+			area.num_households,
+			area.chome_area_id ?? area.area_id,
+		),
 	);
 	await env.DB.batch(upserts);
 

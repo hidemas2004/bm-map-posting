@@ -178,6 +178,8 @@ async function main() {
 		console.log('\n--- D1へのマイグレーション・データ投入 ---');
 		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0001_init.sql']);
 		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0002_areas_block_level.sql']);
+		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0003_area_manager.sql']);
+		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0004_chome_area_id.sql']);
 		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${path.relative(REPO_ROOT, areasSqlPath)}`]);
 
 		// 合言葉が平文で入るSQLはリポジトリ外（OS一時ディレクトリ）に書き、投入後に必ず削除する。
