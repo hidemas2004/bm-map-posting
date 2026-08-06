@@ -71,8 +71,10 @@ export default {
 				if (!admin) {
 					return Response.json({ error: '管理者権限が必要です' }, { status: 403 });
 				}
-				const body = await request.json<{ term_name?: string }>().catch(() => ({}) as { term_name?: string });
-				return createNewTerm(env, String(body.term_name ?? ''));
+				const body = await request
+					.json<{ term_name?: string; inherit_from_term_id?: number | null }>()
+					.catch(() => ({}) as { term_name?: string; inherit_from_term_id?: number | null });
+				return createNewTerm(env, String(body.term_name ?? ''), body.inherit_from_term_id);
 			}
 			if (url.pathname === '/api/users' && request.method === 'GET') {
 				const admin = await requireAdmin(request, env);

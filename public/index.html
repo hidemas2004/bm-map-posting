@@ -41,6 +41,21 @@
   </div>
 </header>
 <div id="map"></div>
+<div id="new-term-modal" class="modal-overlay">
+  <div class="modal-panel">
+    <div class="title">新ターム開始</div>
+    <label class="modal-field">タームの名称
+      <input type="text" id="new-term-name-input">
+    </label>
+    <p class="hint">担当者を引き継ぐタームを選択してください（任意）</p>
+    <div id="new-term-inherit-list"></div>
+    <p class="error" id="new-term-error"></p>
+    <div class="actions">
+      <button type="button" id="new-term-cancel">キャンセル</button>
+      <button type="button" id="new-term-submit">開始する</button>
+    </div>
+  </div>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>

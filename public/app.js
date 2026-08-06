@@ -619,23 +619,69 @@ if (session.user.role === '管理者') {
 	document.getElementById('users-link').style.display = 'block';
 	document.getElementById('polling-stations-link').style.display = 'block';
 	document.getElementById('data-clear-link').style.display = 'block';
-	newTermButton.addEventListener('click', async () => {
-		const termName = prompt('新しいタームの名称を入力してください');
-		if (!termName) return;
-		const res = await apiFetch('/api/term/new', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ term_name: termName }),
-		});
-		const data = await res.json();
-		if (!res.ok) {
-			alert(data.error ?? '新タームの開始に失敗しました');
-			return;
-		}
+	newTermButton.addEventListener('click', () => {
 		menuPanel.classList.remove('show');
-		await loadTerms();
+		openNewTermModal();
 	});
 }
+
+// ---- 新ターム開始モーダル ----
+
+const newTermModal = document.getElementById('new-term-modal');
+const newTermNameInput = document.getElementById('new-term-name-input');
+const newTermInheritList = document.getElementById('new-term-inherit-list');
+const newTermError = document.getElementById('new-term-error');
+
+function openNewTermModal() {
+	newTermNameInput.value = '';
+	newTermError.textContent = '';
+
+	newTermInheritList.innerHTML = '';
+	const noneOption = document.createElement('label');
+	noneOption.className = 'inherit-option';
+	noneOption.innerHTML = '<input type="radio" name="inherit-term" value="" checked> 継承しない';
+	newTermInheritList.appendChild(noneOption);
+
+	for (const term of state.terms) {
+		const option = document.createElement('label');
+		option.className = 'inherit-option';
+		const label = `${term.term_name}${term.status === '進行中' ? '' : '（完了）'}`;
+		option.innerHTML = `<input type="radio" name="inherit-term" value="${term.term_id}"> ${label}`;
+		newTermInheritList.appendChild(option);
+	}
+
+	newTermModal.classList.add('show');
+	newTermNameInput.focus();
+}
+
+function closeNewTermModal() {
+	newTermModal.classList.remove('show');
+}
+
+document.getElementById('new-term-cancel').addEventListener('click', closeNewTermModal);
+
+document.getElementById('new-term-submit').addEventListener('click', async () => {
+	const termName = newTermNameInput.value.trim();
+	if (!termName) {
+		newTermError.textContent = 'タームの名称を入力してください';
+		return;
+	}
+	const selected = newTermInheritList.querySelector('input[name="inherit-term"]:checked');
+	const inheritFromTermId = selected && selected.value ? Number(selected.value) : null;
+
+	const res = await apiFetch('/api/term/new', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ term_name: termName, inherit_from_term_id: inheritFromTermId }),
+	});
+	const data = await res.json();
+	if (!res.ok) {
+		newTermError.textContent = data.error ?? '新タームの開始に失敗しました';
+		return;
+	}
+	closeNewTermModal();
+	await loadTerms();
+});
 
 // ---- 初期化 ----
 
