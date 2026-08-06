@@ -75,6 +75,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 let geoLayer = null;
 let chomeLayer = null;
+let pollingStationLayer = null;
 
 function weightForZoom(baseWeight) {
 	const zoomDiff = map.getZoom() - MAP_INITIAL_ZOOM;
@@ -250,6 +251,45 @@ async function loadChomeBoundary() {
 		}),
 	}).addTo(map);
 }
+
+/**
+ * 投票所ピン（issue#13）。しずく型・紺色のdivIconマーカーをlayerGroupにまとめておき、
+ * ヘッダの「投票所」チェックボックスON時のみmap.addTo()する（初期状態は非表示）。
+ */
+async function loadPollingStations() {
+	const res = await apiFetch('/api/polling-stations');
+	const stations = await res.json();
+	const markers = stations.map((s) => {
+		const popup = document.createElement('div');
+		popup.className = 'popup-content';
+		const title = document.createElement('div');
+		title.className = 'title';
+		title.textContent = s.name;
+		popup.appendChild(title);
+		if (s.address) {
+			const address = document.createElement('div');
+			address.textContent = s.address;
+			popup.appendChild(address);
+		}
+		return L.marker([s.lat, s.lng], {
+			icon: L.divIcon({
+				className: '',
+				html: `<div class="polling-station-pin" style="background:${POLLING_STATION_PIN_COLOR}"></div>`,
+				iconSize: [22, 22],
+				iconAnchor: [11, 22],
+			}),
+		}).bindPopup(popup);
+	});
+	pollingStationLayer = L.layerGroup(markers);
+}
+
+document.getElementById('polling-station-toggle').addEventListener('change', (e) => {
+	if (e.target.checked) {
+		pollingStationLayer.addTo(map);
+	} else {
+		map.removeLayer(pollingStationLayer);
+	}
+});
 
 // ---- ポップアップ ----
 // ポップアップ内のボタン/セレクト操作がクリックとして地図側に伝播すると、Leafletの
@@ -577,6 +617,7 @@ const newTermButton = document.getElementById('new-term-button');
 if (session.user.role === '管理者') {
 	newTermButton.style.display = 'block';
 	document.getElementById('users-link').style.display = 'block';
+	document.getElementById('polling-stations-link').style.display = 'block';
 	document.getElementById('data-clear-link').style.display = 'block';
 	newTermButton.addEventListener('click', async () => {
 		const termName = prompt('新しいタームの名称を入力してください');
@@ -604,6 +645,7 @@ async function init() {
 	populateAssigneeFilterSelect();
 	await loadBoundary();
 	await loadChomeBoundary();
+	await loadPollingStations();
 	await loadTerms();
 }
 

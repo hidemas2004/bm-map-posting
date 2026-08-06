@@ -14,6 +14,9 @@
     <select id="term-select"></select>
     <span id="view-only-badge">閲覧専用</span>
     <select id="assignee-filter"></select>
+    <label class="header-checkbox">
+      <input type="checkbox" id="polling-station-toggle"> 投票所
+    </label>
     <div class="header-actions">
       <button id="gps-button" type="button" title="現在地">📍</button>
       <button id="menu-button" type="button" title="メニュー">&#8801;</button>
@@ -31,6 +34,7 @@
     <button id="new-term-button" type="button" style="display:none;">新ターム開始</button>
     <a href="/history.html" class="menu-link">履歴一覧</a>
     <a href="/areas.html" class="menu-link">地域マスタ一覧</a>
+    <a href="/polling-stations.html" id="polling-stations-link" class="menu-link" style="display:none;">投票所管理</a>
     <a href="/users.html" id="users-link" class="menu-link" style="display:none;">ユーザー管理</a>
     <a href="/data-clear.html" id="data-clear-link" class="menu-link" style="display:none;">データクリア</a>
     <button id="logout-button" type="button">ログアウト</button>

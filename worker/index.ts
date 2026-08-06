@@ -5,8 +5,17 @@ import { createNewTerm, getTermData, listTerms, type TermsEnv } from './terms';
 import { recordDistribution, setAreaManager, setAssignee, type RecordsEnv } from './records';
 import { exportActivityLogCsv, listActivityLog, type ActivityLogEnv } from './activity_log';
 import { deleteTerm, type ResetEnv } from './reset';
+import { importPollingStations, listPollingStations, type PollingStationsEnv } from './polling_stations';
 
-export interface Env extends AuthEnv, UsersEnv, AreasEnv, TermsEnv, RecordsEnv, ActivityLogEnv, ResetEnv {
+export interface Env
+	extends AuthEnv,
+		UsersEnv,
+		AreasEnv,
+		TermsEnv,
+		RecordsEnv,
+		ActivityLogEnv,
+		ResetEnv,
+		PollingStationsEnv {
 	ASSETS: { fetch(request: Request): Promise<Response> };
 }
 
@@ -85,6 +94,16 @@ export default {
 					return Response.json({ error: '管理者権限が必要です' }, { status: 403 });
 				}
 				return importUsers(request, env);
+			}
+			if (url.pathname === '/api/polling-stations' && request.method === 'GET') {
+				return listPollingStations(env);
+			}
+			if (url.pathname === '/api/polling-stations/import' && request.method === 'POST') {
+				const admin = await requireAdmin(request, env);
+				if (!admin) {
+					return Response.json({ error: '管理者権限が必要です' }, { status: 403 });
+				}
+				return importPollingStations(request, env);
 			}
 			if (url.pathname === '/api/record' && request.method === 'POST') {
 				return recordDistribution(request, env, user);

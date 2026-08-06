@@ -58,6 +58,7 @@ npx wrangler d1 execute bm-posting-db --local --file=migrations/0001_init.sql
 npx wrangler d1 execute bm-posting-db --local --file=migrations/0002_areas_block_level.sql
 npx wrangler d1 execute bm-posting-db --local --file=migrations/0003_area_manager.sql
 npx wrangler d1 execute bm-posting-db --local --file=migrations/0004_chome_area_id.sql
+npx wrangler d1 execute bm-posting-db --local --file=migrations/0006_polling_stations.sql
 npx wrangler d1 execute bm-posting-db --local --file=seed/areas_yamato.sql
 npx wrangler d1 execute bm-posting-db --local --file=seed/users.sql
 ```
@@ -350,6 +351,16 @@ npx wrangler deploy
 実態としては分割後の複数エリアに同じ担当が入ったままになる）。管理者が該当5町のエリア担当設定を
 目視確認し、必要に応じて個別に設定し直すこと。
 
+### polling_stationsテーブルの追加（issue#13対応、2026-08）
+
+新規テーブルの追加のみ（既存テーブルへの変更・データ移行なし）のため、`chome_area_id`列の
+追加時のような順序制約はない。
+
+```bash
+npx wrangler d1 execute bm-posting-db --remote --file=migrations/0006_polling_stations.sql
+npx wrangler deploy
+```
+
 ### 初回構築時の手順（参考。再構築が必要になった場合用）
 
 1. `npx wrangler login` でCloudflareアカウントに認証する
@@ -358,9 +369,9 @@ npx wrangler deploy
 3. 本番D1へマイグレーション・シードを適用する
    （`npx wrangler d1 execute bm-posting-db --remote --file=migrations/0001_init.sql`、
    `migrations/0002_areas_block_level.sql`、`migrations/0003_area_manager.sql`、
-   `migrations/0004_chome_area_id.sql`、`seed/areas_yamato.sql`、`seed/users.sql` の順に
-   `--remote` フラグを付けて適用。`seed/areas_yamato.sql`は`chome_area_id`列を含む形で生成済み
-   のため`migrations/0005_...`は不要）
+   `migrations/0004_chome_area_id.sql`、`migrations/0006_polling_stations.sql`、
+   `seed/areas_yamato.sql`、`seed/users.sql` の順に`--remote` フラグを付けて適用。
+   `seed/areas_yamato.sql`は`chome_area_id`列を含む形で生成済みのため`migrations/0005_...`は不要）
 4. `wrangler secret put SESSION_SECRET` / `wrangler secret put AREAS_IMPORT_TOKEN` を設定する
 5. `npx wrangler deploy` で本番デプロイする
 6. ユーザー管理画面（`/users.html`）から`seed/users.sql`のテスト用合言葉を変更する

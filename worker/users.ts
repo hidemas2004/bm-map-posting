@@ -2,7 +2,7 @@
  * ログイン画面のユーザーIDプルダウン用。合言葉等の機微情報は含めない。
  */
 
-import { csvResponse, toCsv } from './csv';
+import { csvResponse, parseCsv, stripBom, toCsv } from './csv';
 
 export interface UsersEnv {
 	DB: D1Database;
@@ -41,40 +41,6 @@ export async function exportUsersCsv(env: UsersEnv): Promise<Response> {
 	return csvResponse(csv, 'users.csv');
 }
 
-/** 簡易CSVパーサ。ダブルクォート囲み・""エスケープに対応（改行を含むフィールドは非対応）。 */
-function parseCsv(text: string): string[][] {
-	const lines = text.split(/\r\n|\n|\r/).filter((line) => line.length > 0);
-	return lines.map((line) => {
-		const fields: string[] = [];
-		let cur = '';
-		let inQuotes = false;
-		for (let i = 0; i < line.length; i++) {
-			const ch = line[i];
-			if (inQuotes) {
-				if (ch === '"') {
-					if (line[i + 1] === '"') {
-						cur += '"';
-						i++;
-					} else {
-						inQuotes = false;
-					}
-				} else {
-					cur += ch;
-				}
-			} else if (ch === '"') {
-				inQuotes = true;
-			} else if (ch === ',') {
-				fields.push(cur);
-				cur = '';
-			} else {
-				cur += ch;
-			}
-		}
-		fields.push(cur);
-		return fields;
-	});
-}
-
 /**
  * ユーザーマスタ一括投入（管理者限定）。`user_id`が既存ならUPSERT、なければ新規追加。
  * CSVヘッダ: user_id, name, role, active, passphrase（passphrase以外は必須ヘッダ）。
@@ -82,8 +48,7 @@ function parseCsv(text: string): string[][] {
  * role省略時は「一般」、active省略時は1（ログイン可）として扱う。
  */
 export async function importUsers(request: Request, env: UsersEnv): Promise<Response> {
-	let text = await request.text();
-	if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // UTF-8 BOM除去
+	const text = stripBom(await request.text());
 
 	const rows = parseCsv(text);
 	if (rows.length === 0) {
