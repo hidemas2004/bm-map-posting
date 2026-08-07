@@ -129,6 +129,8 @@ body.list-page #header a#back-link {
 }
 .import-section .error { color: #dc2626; font-size: 13px; margin: 8px 0 0; }
 .import-section .success { color: #15803d; font-size: 13px; margin: 8px 0 0; }
+.import-section .warning { color: #b45309; font-size: 13px; margin: 8px 0 0; }
+.import-section .import-warnings { color: #b45309; font-size: 13px; margin: 4px 0 0; padding-left: 18px; }
 
 .popup-content { font-size: 13px; min-width: 220px; }
 .popup-content .title { font-weight: 700; font-size: 14px; margin-bottom: 6px; }

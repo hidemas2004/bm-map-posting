@@ -1,4 +1,5 @@
 import { parseCsv, stripBom } from './csv';
+import { checkAndCorrectDatum, type DatumRowResult } from './lib/datum_check';
 
 export interface PollingStationsEnv {
 	DB: D1Database;
@@ -49,7 +50,7 @@ export async function importPollingStations(request: Request, env: PollingStatio
 		return Response.json({ error: 'データ行がありません' }, { status: 400 });
 	}
 
-	const stations: { name: string; address: string; lat: number; lng: number }[] = [];
+	const stations: { line: number; name: string; address: string; lat: number; lng: number }[] = [];
 	for (const [i, r] of dataRows.entries()) {
 		const lineNo = i + 2; // ヘッダ行ぶん+1、1始まりで+1
 		const name = (r[colIndex.name] ?? '').trim();
@@ -67,12 +68,46 @@ export async function importPollingStations(request: Request, env: PollingStatio
 			return Response.json({ error: `${lineNo}行目: lng が不正です` }, { status: 400 });
 		}
 
-		stations.push({ name, address, lat, lng });
+		stations.push({ line: lineNo, name, address, lat, lng });
 	}
+
+	// 測地系（日本測地系/世界測地系）のズレを自動検出・補正する（issue#16）。
+	// 住所テキストをジオコーディングした期待座標とCSVの座標を突き合わせ、バッチ全体が
+	// 日本測地系とみなせる場合は全行を世界測地系に補正してからインポートする。
+	const datumCheck = await checkAndCorrectDatum(stations);
+
+	if (datumCheck.verdict === 'abort') {
+		return Response.json(
+			{
+				error: '住所と座標の整合性が確認できないため、インポートを中断しました。行ごとの判定結果を確認してください。',
+				datum_check: {
+					ok_count: datumCheck.okCount,
+					candidate_count: datumCheck.candidateCount,
+					unresolved_count: datumCheck.unresolvedCount,
+					no_address_count: datumCheck.noAddressCount,
+					rows: datumCheck.rows.map((r: DatumRowResult) => ({
+						line: r.line,
+						bucket: r.bucket,
+						dist_raw_m: r.distRawM,
+						dist_conv_m: r.distConvM,
+					})),
+				},
+			},
+			{ status: 400 },
+		);
+	}
+
+	const finalStations =
+		datumCheck.verdict === 'correct_all'
+			? stations.map((s) => {
+					const corrected = datumCheck.correctedCoords.get(s.line);
+					return corrected ? { ...s, lat: corrected.lat, lng: corrected.lng } : s;
+				})
+			: stations;
 
 	const statements = [
 		env.DB.prepare('DELETE FROM polling_stations'),
-		...stations.map((s) =>
+		...finalStations.map((s) =>
 			env.DB.prepare('INSERT INTO polling_stations (name, address, lat, lng) VALUES (?, ?, ?, ?)').bind(
 				s.name,
 				s.address,
@@ -83,5 +118,11 @@ export async function importPollingStations(request: Request, env: PollingStatio
 	];
 	await env.DB.batch(statements);
 
-	return Response.json({ imported: stations.length });
+	return Response.json({
+		imported: finalStations.length,
+		datum_corrected: datumCheck.verdict === 'correct_all',
+		corrected_count: datumCheck.correctedCount,
+		datum_check_note: datumCheck.note,
+		warnings: datumCheck.warnings,
+	});
 }
