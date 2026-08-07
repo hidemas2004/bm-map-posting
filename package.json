@@ -11,7 +11,7 @@
     "backfill-chome-area-id": "node scripts/backfill-chome-area-id.mjs"
   },
   "dependencies": {
-    "bm-map-datum-check": "github:hidemas2004/bm-map-shared#v1.0.0"
+    "bm-map-datum-check": "github:hidemas2004/bm-map-shared#v1.0.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260726.1",
