@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node --test worker/lib/*.test.ts",
     "new-region": "node scripts/new-region.mjs",
     "fetch-boundary-data": "node scripts/fetch-boundary-data.mjs",
     "backfill-chome-area-id": "node scripts/backfill-chome-area-id.mjs"
+  },
+  "dependencies": {
+    "bm-map-datum-check": "github:hidemas2004/bm-map-shared#v1.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260726.1",

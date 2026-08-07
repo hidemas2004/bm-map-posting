@@ -1,5 +1,5 @@
 import { parseCsv, stripBom } from './csv';
-import { checkAndCorrectDatum, type DatumRowResult } from './lib/datum_check';
+import { checkAndCorrectDatum, type DatumRowResult } from 'bm-map-datum-check';
 
 export interface PollingStationsEnv {
 	DB: D1Database;
