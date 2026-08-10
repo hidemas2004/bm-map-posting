@@ -276,17 +276,20 @@ async function main() {
 	}
 
 	// --- マイグレーション・地域マスタ・初期管理者の投入 ---
+	// wrangler d1 execute --remote は既定で1回ごとに「Ok to proceed?」の確認を挟むが、ここで実行する
+	// のは直前に作成したばかりの空のD1データベースへの初回投入のみ（既存データを壊すリスクが無い）
+	// なので --yes で省略する（README等に載せる、既存DBに対する手動コマンド例では付けない）。
 	if (!meta.dbSeeded) {
 		console.log('\n--- D1へのマイグレーション・データ投入 ---');
-		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0001_init.sql']);
-		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0002_areas_block_level.sql']);
-		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0003_area_manager.sql']);
-		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0004_chome_area_id.sql']);
-		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0006_polling_stations.sql']);
-		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${path.relative(REPO_ROOT, areasSqlPath)}`]);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0001_init.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0002_areas_block_level.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0003_area_manager.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0004_chome_area_id.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0006_polling_stations.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', `--file=${path.relative(REPO_ROOT, areasSqlPath)}`]);
 		const chomeAreaIdSqlPath = path.join(dir, 'chome_area_id.sql');
 		if (meta.hasChomeBoundary && existsSync(chomeAreaIdSqlPath)) {
-			run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${path.relative(REPO_ROOT, chomeAreaIdSqlPath)}`]);
+			run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', `--file=${path.relative(REPO_ROOT, chomeAreaIdSqlPath)}`]);
 		}
 
 		// 合言葉が平文で入るSQLはリポジトリ外（OS一時ディレクトリ）に書き、投入後に必ず削除する。
@@ -295,7 +298,7 @@ async function main() {
 		const adminSqlPath = path.join(os.tmpdir(), `bm-map-posting-admin-${regionId}-${crypto.randomUUID()}.sql`);
 		writeFileSync(adminSqlPath, adminSql);
 		try {
-			run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${adminSqlPath}`]);
+			run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', `--file=${adminSqlPath}`]);
 		} finally {
 			rmSync(adminSqlPath, { force: true });
 		}
