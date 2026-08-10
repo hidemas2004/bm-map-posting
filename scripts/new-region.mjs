@@ -19,7 +19,8 @@ import { fileURLToPath } from 'node:url';
 
 import { ask, confirm, closePrompt } from './lib/prompt.mjs';
 import { appendEnvBlock, envExists } from './lib/wrangler-jsonc.mjs';
-import { fetchCityBoundary } from './lib/estat-boundary.mjs';
+import { fetchCityBoundary, fetchChomeBoundary, buildChomeAreaIdUpdateSql } from './lib/estat-boundary.mjs';
+import { assignChomeAreaIds } from './lib/geo.mjs';
 import { computeCenterFromGeoJson } from './lib/geojson-bbox.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -145,24 +146,77 @@ async function main() {
 	meta.mapZoom = meta.mapZoom ?? Number(await ask('地図初期ズームレベル', { defaultValue: '13' }));
 	writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
-	// --- 丁目境界（チョーム境界）レイヤーの有無 ---
-	// 大和市の boundary_chome.geojson は基本単位区への格上げ前データの遺物として例外的に存在する
-	// 補助レイヤーであり、他地域での取得手順は未整備（README「今後の課題」参照）。用意できる場合のみ
-	// 有効化する任意機能として扱う。
+	// --- エリア境界（チョーム境界）レイヤーの有無 ---
+	// 「エリア」（area_manager機能・chome_area_idの単位）の境界データ。e-Statの町丁・字等境界データ
+	// から自動取得できる（fetchChomeBoundary）。取得できない場合は手動配置にフォールバックする。
 	if (meta.hasChomeBoundary === undefined) {
 		meta.hasChomeBoundary = await confirm(
-			'丁目単位の境界線（チョーム境界）レイヤーをこの地域でも表示しますか？（表示専用の補助レイヤー。取得手順は別途用意が必要）',
-			{ defaultValue: false },
+			'エリア境界（丁目単位の境界線）レイヤーをこの地域で有効にしますか？（area_manager機能の単位。e-Statから自動取得可能）',
+			{ defaultValue: true },
 		);
 		writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 	}
+
+	let chomeWarnings = [];
 	if (meta.hasChomeBoundary) {
+		const chomeBoundarySourcePath = path.join(dir, 'boundary_chome.geojson');
 		const chomeBoundaryDestPath = path.join(publicDataDir, 'boundary_chome.geojson');
-		if (!existsSync(chomeBoundaryDestPath)) {
-			console.log(`\n${path.relative(REPO_ROOT, chomeBoundaryDestPath)} を用意してください（丁目単位の境界線GeoJSON）。`);
-			while (!existsSync(chomeBoundaryDestPath)) {
+		const chomeAreaIdSqlPath = path.join(dir, 'chome_area_id.sql');
+
+		if (!existsSync(chomeBoundarySourcePath)) {
+			console.log('\n--- エリア境界（チョーム境界）データの収集 ---');
+			const autoFetchChome = await confirm('e-Statから自動取得しますか？（ネットワーク到達性が必要）', { defaultValue: true });
+			if (autoFetchChome) {
+				try {
+					const result = fetchChomeBoundary({ cityCode: meta.cityCode, cityName: meta.cityName, outDir: dir });
+					chomeWarnings = result.warnings;
+					console.log(`\n${result.geojson.features.length}件のエリアを取得しました。`);
+				} catch (err) {
+					console.error(`\n自動取得に失敗しました: ${err.message}`);
+					console.log(
+						'README.md の「行政区域データの追加・基本単位区単位への格上げ手順」を参照し、手動で\n' +
+							`  regions/${regionId}/boundary_chome.geojson\n` +
+							'を用意してください。',
+					);
+				}
+			} else {
+				console.log(`README.md を参照し、regions/${regionId}/boundary_chome.geojson を手動で用意してください。`);
+			}
+			while (!existsSync(chomeBoundarySourcePath)) {
 				await ask('準備ができたらEnterを押してください', { defaultValue: ' ' });
 			}
+		} else {
+			console.log(`\n(regions/${regionId}/boundary_chome.geojson は既に用意されています。このまま使用します)`);
+		}
+
+		if (!existsSync(chomeBoundaryDestPath)) {
+			writeFileSync(chomeBoundaryDestPath, readFileSync(chomeBoundarySourcePath));
+		}
+
+		// --- chome_area_id の空間結合（区画→エリア） ---
+		if (!existsSync(chomeAreaIdSqlPath)) {
+			console.log('\n--- chome_area_id（エリア）の空間結合 ---');
+			const blockGeojson = JSON.parse(readFileSync(boundaryPath, 'utf8'));
+			const chomeGeojson = JSON.parse(readFileSync(chomeBoundarySourcePath, 'utf8'));
+			const { chomeAreaIdByAreaId, warnings: spatialWarnings } = assignChomeAreaIds(blockGeojson.features, chomeGeojson.features);
+
+			if (spatialWarnings.length > 0) {
+				console.warn(`空間結合の警告が${spatialWarnings.length}件あります:`);
+				for (const w of spatialWarnings) console.warn(`  ${w}`);
+				const fallbackRatio = spatialWarnings.length / blockGeojson.features.length;
+				if (fallbackRatio > 0.5) {
+					console.warn(
+						`\n【要注意】区画の${Math.round(fallbackRatio * 100)}%が自分自身のarea_idにフォールバックしました。` +
+							'boundary_chome.geojson側のCITY_NAME抽出がうまくいっていない可能性があります' +
+							`（政令指定都市の区名表記揺れ等）。デプロイ前に regions/${regionId}/boundary_chome.geojson を確認してください。`,
+					);
+				}
+			} else {
+				console.log('空間結合の警告はありませんでした（全区画が1つのエリアに一致）。');
+			}
+
+			writeFileSync(chomeAreaIdSqlPath, buildChomeAreaIdUpdateSql(chomeAreaIdByAreaId, spatialWarnings));
+			chomeWarnings = [...chomeWarnings, ...spatialWarnings];
 		}
 	}
 
@@ -231,6 +285,10 @@ async function main() {
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0004_chome_area_id.sql']);
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0006_polling_stations.sql']);
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${path.relative(REPO_ROOT, areasSqlPath)}`]);
+		const chomeAreaIdSqlPath = path.join(dir, 'chome_area_id.sql');
+		if (meta.hasChomeBoundary && existsSync(chomeAreaIdSqlPath)) {
+			run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${path.relative(REPO_ROOT, chomeAreaIdSqlPath)}`]);
+		}
 
 		// 合言葉が平文で入るSQLはリポジトリ外（OS一時ディレクトリ）に書き、投入後に必ず削除する。
 		const esc = (s) => s.replace(/'/g, "''");
@@ -266,10 +324,14 @@ async function main() {
 	console.log(`  Worker名:           ${workerName}`);
 	console.log(`  D1データベース:     ${d1DatabaseName} (${databaseId})`);
 	console.log(`  地図初期座標:       [${meta.mapCenter.join(', ')}]  ズーム: ${meta.mapZoom}`);
-	console.log(`  チョーム境界レイヤー: ${meta.hasChomeBoundary ? '有効' : '無効'}`);
+	console.log(`  エリア境界レイヤー: ${meta.hasChomeBoundary ? '有効' : '無効'}`);
 	console.log(`  管理者ユーザーID:   ${meta.adminUserId}`);
-	if (warnings.length > 0) {
-		console.log(`  要確認事項:         ${warnings.length}件（regions/${regionId}/areas.sql 内のコメント参照）`);
+	const totalWarnings = warnings.length + chomeWarnings.length;
+	if (totalWarnings > 0) {
+		console.log(
+			`  要確認事項:         ${totalWarnings}件（regions/${regionId}/areas.sql` +
+				`${chomeWarnings.length > 0 ? `, chome_area_id.sql` : ''} 内のコメント参照）`,
+		);
 	}
 	console.log('');
 

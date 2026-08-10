@@ -189,32 +189,58 @@ CSVダウンロードに対応している（スプレッドシートでの目�
      いることがある（大和市では基本単位区レベルで0件だったが、他市区町村では起こりうる）。
      `area_id` はDB側でPRIMARY KEYのため、世帯数を合算し、ジオメトリはMultiPolygonとして
      1レコードにマージする必要がある。
-   - `chome_area_id`（区画が属する「エリア」のID）→ 本スクリプトは基本単位区データしか
-     取得しないため、暫定的に自分自身の`area_id`を設定する（1区画=1エリア扱い）。
+   - `chome_area_id`（区画が属する「エリア」のID）→ `scripts/lib/estat-boundary.mjs`単体では
+     暫定的に自分自身の`area_id`を設定する（1区画=1エリア扱い）。`npm run new-region`でエリア境界
+     レイヤーを有効にした場合は、この直後に町丁・字等境界データ（後述）との空間結合で自動算出される。
 4. **投入**: 整形したデータを `POST /api/areas/import` へPOST（本APIの仕様は下記参照）。
    併せて `regions/<地域ID>/areas.sql` としてSQLも保存しておくと、DBを作り直しても再現できる。
 5. **境界GeoJSONの配置**: 抽出したfeatureを `public/data/regions/<地域ID>/boundary.geojson`
    として保存する（`npm run new-region`を使う場合は下記「複数地域の並行運用」の通り自動で
    行われるため、この手順は`scripts/lib/estat-boundary.mjs`を単体実行する場合のみ手動で行う）。
 
-**今後の課題（issue#12関連）**: 上記手順では`chome_area_id`が暫定的に自分自身の`area_id`に
-なる（1区画=1エリア扱い）ため、大和市のように「エリア」を町丁・字等単位でまとめる運用はできない。
-大和市の`boundary_chome.geojson`は格上げ前データの遺物として例外的に存在するだけで、他市区町村を
-追加する現行フローには町丁・字等境界データ（`dlserveyId=A002005212020`、都道府県単位ダウンロード）
-の取得手順が無い。同じ「エリア」概念を他市区町村でも使う場合は、この取得手順と
-`scripts/lib/geo.mjs`（空間結合）を`scripts/lib/estat-boundary.mjs`/`new-region.mjs`に
-組み込む対応が別途必要（大和市データの`chome_area_id`算出は`scripts/backfill-chome-area-id.mjs`
-参照）。
+**「エリア」（chome_area_id・area_manager単位）境界データの取得（issue#12対応）**: 「エリア」は
+町丁・字等単位の境界データ（`dlserveyId=A002005212020`、**都道府県単位ダウンロード**）から取得する。
+基本単位区データとURL構築ロジックは共通で、`dlserveyId`とダウンロード単位（市区町村コード→
+都道府県コード）だけが異なる:
 
-上記1〜3は `scripts/lib/estat-boundary.mjs` としてスクリプト化済み。単体実行する場合は
+```bash
+curl -L -o pref14.zip \
+  "https://www.e-stat.go.jp/gis/statmap-search/data?dlserveyId=A002005212020&code=14&coordSys=1&format=shape&downloadType=5&datum=2011"
+# dlserveyId=A002005212020: 令和2年国勢調査 町丁・字等境界データ（都道府県単位ダウンロード）
+# code: 都道府県コード2桁（市区町村コードの先頭2桁と同じ。大和市=14213なので神奈川県=14）
+unzip pref14.zip -d extracted   # r2ka14.shp 等が展開される（対象都道府県の全市区町村分を含む）
+```
+
+抽出・整形ロジック（`CITY_NAME`絞込み・丁目パース・世帯数合算等）は`extractMunicipality`と共通で、
+出力プロパティのみ`boundary_chome.geojson`のスキーマ（`area_id`/`city`/`ward`/`town`/`chome`/
+`num_households`、`block`列なし）に組み替える（`scripts/lib/estat-boundary.mjs`の
+`extractChomeBoundary`/`fetchChomeBoundary`）。区画（基本単位区）とエリア（この境界データ）の
+対応付けは`scripts/lib/geo.mjs`の`assignChomeAreaIds`（代表点による空間結合）で行う。
+
+`npm run new-region`はこの一連の流れ（取得→空間結合→`chome_area_id`のUPDATE文生成）を自動で
+行う（下記「複数地域の並行運用」参照）。単体で実行・再取得したい場合:
 
 ```bash
 npm run fetch-boundary-data -- --region 202704-hiratsuka --city 平塚市 --cityCode 14206
 # 政令指定都市の区の場合: --city 横浜市鶴見区 --cityCode 14101
+# エリア境界（boundary_chome.geojson）だけ再取得したい場合は --chome-only を付ける
+npm run fetch-boundary-data -- --region 202704-hiratsuka --city 平塚市 --cityCode 14206 --chome-only
 ```
 
 `--cityCode` は総務省「全国地方公共団体コード」で確認できる5桁市区町村コード。
-`regions/<地域ID>/areas.sql` と `boundary.geojson` が生成される（下記「複数地域の並行運用」参照）。
+`regions/<地域ID>/areas.sql` と `boundary.geojson`（`--chome-only`時は`boundary_chome.geojson`）
+が生成される（下記「複数地域の並行運用」参照）。
+
+既にデプロイ済みの地域へ後からエリア機能を追加したい場合は`scripts/backfill-chome-area-id.mjs`
+（大和市の`chome_area_id`もこれで算出した）を使う:
+
+```bash
+npm run backfill-chome-area-id -- --region 14213-yamato --city 大和市 --cityCode 14213
+```
+
+`regions/<地域ID>/areas.sql`（フレッシュDB向け）と`migrations/backfill_chome_area_id_<地域ID>.sql`
+（既存DB向けのグループ化UPDATE文。出力後にmigrations/の連番規則に合わせて手動リネームすること）
+が生成される。
 
 ## 複数地域の並行運用
 
@@ -252,9 +278,10 @@ npm run new-region
 2. 境界データ・地域マスタの収集（e-Statから自動取得 or 手動で`regions/<id>/`に用意）し、
    `public/data/regions/<id>/boundary.geojson`へ恒久的に配置
 3. 境界データのbboxから地図初期座標を自動算出（上書き可）
-4. 丁目単位の境界線（チョーム境界）レイヤーをこの地域でも使うか確認（既定は無効。大和市専用
-   データの遺物であり、他地域での取得手順は未整備。有効にする場合は
-   `public/data/regions/<id>/boundary_chome.geojson`を別途用意する）
+4. エリア境界（丁目単位の境界線・area_manager機能の単位）レイヤーをこの地域で有効にするか確認
+   （既定は有効。e-Statの町丁・字等境界データから自動取得し、区画〈基本単位区〉との空間結合で
+   `chome_area_id`を自動算出する。取得に失敗した場合は`regions/<id>/boundary_chome.geojson`の
+   手動配置にフォールバックする）
 5. 初期管理者ユーザーを1名だけ登録（以降の担当者追加はデプロイ後に`/users.html`のCSV
    インポートで行う）
 6. D1データベースを新規作成し、`wrangler.jsonc`に`env.<id>`ブロック（`vars`込み）を追記
@@ -273,7 +300,8 @@ npm run new-region
   どちらにも保存されない**（OS一時ディレクトリ経由でD1に投入・ログイン確認後、即メモリから
   破棄する設計）。
 - スクリプト本体は `scripts/new-region.mjs`（オーケストレーション）、
-  `scripts/lib/estat-boundary.mjs`（境界データ取得・整形）、
+  `scripts/lib/estat-boundary.mjs`（境界データ取得・整形。区画・エリア境界の両方）、
+  `scripts/lib/geo.mjs`（区画↔エリアの空間結合）、
   `scripts/lib/wrangler-jsonc.mjs`（`wrangler.jsonc`への安全な追記）、
   `scripts/lib/geojson-bbox.mjs`（bbox中心計算）に分かれている。
 - e-Statの自動取得には`www.e-stat.go.jp`へのネットワーク到達性が必要。到達できない環境
@@ -285,10 +313,16 @@ npm run new-region
 
 - **`npm run new-region` は実際のCloudflare操作（D1作成・Secrets設定・deploy）を伴う箇所を
   実機（Cloudflare認証情報がある環境）で検証できていない**。境界データの変換ロジック
-  （漢数字丁目のパース・複数ポリゴンのマージ・世帯数合算）と`wrangler.jsonc`への追記処理は
-  単体テスト済みだが、初めて新しい地域を追加する際は各ステップの出力（特に`wrangler d1 create`
-  の`database_id`抽出）を確認しながら進めること。想定外のwrangler出力形式で`database_id`の
-  自動抽出に失敗した場合は、出力を貼り付けて手動入力できるようにしてある。
+  （漢数字丁目のパース・複数ポリゴンのマージ・世帯数合算・空間結合）は`npm test`の単体テスト
+  （`scripts/lib/*.test.mjs`）でカバーしているが、初めて新しい地域を追加する際は各ステップの
+  出力（特に`wrangler d1 create`の`database_id`抽出）を確認しながら進めること。想定外のwrangler
+  出力形式で`database_id`の自動抽出に失敗した場合は、出力を貼り付けて手動入力できるようにしてある。
+- **エリア境界（chome）データの自動取得は、政令指定都市の区での動作が実データ未検証**。
+  基本単位区データと同じ`CITY_NAME`規則（例:「横浜市鶴見区」）が町丁・字等境界データ側でも
+  成立する前提でロジックを組んでいるが、実際に横浜市・川崎市・相模原市の区を追加する際は
+  取得結果（`regions/<id>/boundary_chome.geojson`の件数・空間結合の警告件数）を確認すること。
+  取得や空間結合に失敗しても`npm run new-region`自体は停止せず、手動配置へのフォールバック
+  導線に落ちる。
 - **現時点の対象地域は大和市のみ**（`env.14213-yamato`）: 横浜市の区単位プレースホルダデータは
   削除済み（世帯数が概算で正式なものではなかったため）。他市区町村を追加する場合は上記
   「複数地域の並行運用」の`npm run new-region`で、大和市と同様にe-Stat由来の基本単位区単位の

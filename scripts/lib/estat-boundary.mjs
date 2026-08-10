@@ -1,11 +1,14 @@
 /**
  * README.md「行政区域データの追加・基本単位区単位への格上げ手順」で大和市データを取得した際の手順を
  * スクリプト化したもの。e-Statの小地域(基本単位区)境界データ（2020年国勢調査、APIキー不要）を
- * ダウンロード→mapshaperでGeoJSON化→area_id/town/chome/block/num_householdsに整形する。
+ * ダウンロード→mapshaperでGeoJSON化→area_id/town/chome/block/num_householdsに整形する
+ * （fetchCityBoundary/extractMunicipality）。加えて、「エリア」（chome_area_id・area_manager単位）
+ * の境界データである町丁・字等境界データの取得（fetchChomeBoundary/extractChomeBoundary）も提供する。
  *
  * 基本単位区は町丁・字等(丁目)よりさらに細かい区画（街区相当。大和市の場合1区画平均約38世帯）。
  * 町丁・字等は都道府県単位でのダウンロードだったが、基本単位区は**市区町村単位**でしかダウンロード
- * できない点に注意（`AGGREGATE_SURVEY_ID`のシェープファイルは対象市区町村分のみを含む）。
+ * できない点に注意（`BLOCK_SURVEY_ID`のシェープファイルは対象市区町村分のみを含み、`CHOME_SURVEY_ID`
+ * のシェープファイルは同一都道府県内の他市区町村分も含む）。
  *
  * 注意: このスクリプトの実行には `curl`・`unzip`・ネットワーク到達性
  * （www.e-stat.go.jp、npx経由のmapshaperダウンロード）が必要。ネットワークが制限された環境
@@ -20,11 +23,18 @@ import { fileURLToPath } from 'node:url';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CACHE_DIR = path.join(REPO_ROOT, '.cache', 'estat-boundary');
 
-/** 令和2年国勢調査 小地域(基本単位区)境界データのサーベイID（e-Stat統計地理情報システム）。 */
-const AGGREGATE_SURVEY_ID = 'B002005212020';
+/** 令和2年国勢調査 小地域(基本単位区)境界データのサーベイID（e-Stat統計地理情報システム）。市区町村単位ダウンロード。 */
+const BLOCK_SURVEY_ID = 'B002005212020';
+
+/** 令和2年国勢調査 町丁・字等境界データのサーベイID。「エリア」（chome_area_id・area_manager単位）の
+ *  境界データそのもの。基本単位区データと異なり都道府県単位でしかダウンロードできない。 */
+const CHOME_SURVEY_ID = 'A002005212020';
 
 /** areas.sql の1つのINSERT文に含める最大行数（D1の"statement too long"エラーを避けるため）。 */
 const AREAS_SQL_CHUNK_SIZE = 200;
+
+/** chome_area_id一括UPDATE文の1つのIN(...)に含めるarea_id数の上限（D1のSQL文長制限を避けるための安全マージン）。 */
+const UPDATE_CHUNK_SIZE = 500;
 
 const DESIGNATED_CITIES = ['横浜市', '川崎市', '相模原市'];
 const DIGITS = { 〇: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
@@ -105,8 +115,10 @@ export function buildAreasSql(regionLabel, areas, warnings = []) {
 		'--   採番。e-Statの公式な区画番号ではなく本システム独自の表示用連番）。1区画のみの丁目では空欄。',
 		'-- num_households は同データのSETAI（世帯数）列の実数値（概算ではない）。',
 		'-- chome_area_id は区画が属する「エリア」（boundary_chome.geojsonの境界ポリゴン）のarea_id。',
-		'--   本スクリプトはチョーム境界データを取得しないため暫定的に自分自身のarea_idを設定する',
-		'--   （1区画=1エリア扱い）。実際のチョーム単位への統合は scripts/backfill-chome-area-id.mjs 参照。',
+		'--   本関数単体では暫定的に自分自身のarea_idを設定する（1区画=1エリア扱い）。エリア境界',
+		'--   （hasChomeBoundary）を有効にした地域では、scripts/new-region.mjsがこの直後に',
+		'--   fetchChomeBoundary+assignChomeAreaIdsで算出したchome_area_id.sqlをUPDATEで反映する。',
+		'--   既にデプロイ済みの地域へ後から追加する場合は scripts/backfill-chome-area-id.mjs 参照。',
 	];
 	if (warnings.length > 0) {
 		lines.push('--', '-- 【要確認】');
@@ -195,14 +207,16 @@ export function extractMunicipality(featureCollection, cityName) {
 	return { areas, geojson: { type: 'FeatureCollection', features: mergedFeatures }, warnings };
 }
 
-function downloadMunicipalityShapefile(cityCode) {
+/** ダウンロード・展開の共通処理。cacheKeyPrefixはキャッシュファイル名の接頭辞（"city"=市区町村単位、
+ *  "pref"=都道府県単位）で、基本単位区・町丁字等の両方から共用する。 */
+function downloadShapefile({ surveyId, code, cacheKeyPrefix, logLabel }) {
 	mkdirSync(CACHE_DIR, { recursive: true });
-	const zipPath = path.join(CACHE_DIR, `city${cityCode}.zip`);
-	const extractDir = path.join(CACHE_DIR, `city${cityCode}`);
+	const zipPath = path.join(CACHE_DIR, `${cacheKeyPrefix}${code}.zip`);
+	const extractDir = path.join(CACHE_DIR, `${cacheKeyPrefix}${code}`);
 
 	if (!existsSync(zipPath)) {
-		const url = `https://www.e-stat.go.jp/gis/statmap-search/data?dlserveyId=${AGGREGATE_SURVEY_ID}&code=${cityCode}&coordSys=1&format=shape&downloadType=5&datum=2011`;
-		console.log(`e-Statから市区町村コード${cityCode}の基本単位区シェープファイルをダウンロード中...`);
+		const url = `https://www.e-stat.go.jp/gis/statmap-search/data?dlserveyId=${surveyId}&code=${code}&coordSys=1&format=shape&downloadType=5&datum=2011`;
+		console.log(`e-Statから${logLabel}${code}のシェープファイルをダウンロード中...`);
 		execFileSync('curl', ['-L', '-f', '-o', zipPath, url], { stdio: 'inherit' });
 	} else {
 		console.log('(キャッシュ済みのZIPを使用します: ' + zipPath + ')');
@@ -213,6 +227,14 @@ function downloadMunicipalityShapefile(cityCode) {
 		execFileSync('unzip', ['-o', zipPath, '-d', extractDir], { stdio: 'inherit' });
 	}
 	return extractDir;
+}
+
+function downloadMunicipalityShapefile(cityCode) {
+	return downloadShapefile({ surveyId: BLOCK_SURVEY_ID, code: cityCode, cacheKeyPrefix: 'city', logLabel: '市区町村コード' });
+}
+
+function downloadPrefectureShapefile(prefCode) {
+	return downloadShapefile({ surveyId: CHOME_SURVEY_ID, code: prefCode, cacheKeyPrefix: 'pref', logLabel: '都道府県コード' });
 }
 
 function findShpFile(dir) {
@@ -251,4 +273,93 @@ export function fetchCityBoundary({ cityCode, cityName, outDir }) {
 	writeFileSync(path.join(outDir, 'areas.sql'), buildAreasSql(cityName, areas, warnings));
 
 	return { areas, warnings, outDir };
+}
+
+/** 与えられた町丁・字等境界データ（都道府県単位ダウンロードのため、対象市区町村以外のフィーチャが
+ *  大量に混在する）から、指定CITY_NAMEの「エリア」境界を抽出する。フィーチャ抽出・丁目パース・
+ *  MultiPolygon統合ロジックはextractMunicipality()を再利用し、出力プロパティのみ
+ *  boundary_chome.geojsonの既存スキーマ（area_id/city/ward/town/chome/num_households。
+ *  チョーム単位ではblockという区画細分の概念自体が無意味なため持たない）に組み替える。
+ *  ネットワークに依存しない純粋関数。 */
+export function extractChomeBoundary(featureCollection, cityName) {
+	const { areas, geojson, warnings } = extractMunicipality(featureCollection, cityName);
+	const geometryByAreaId = new Map(geojson.features.map((f) => [f.properties.area_id, f.geometry]));
+	const features = areas.map((a) => ({
+		type: 'Feature',
+		properties: { area_id: a.area_id, city: a.city, ward: a.ward, town: a.town, chome: a.chome, num_households: a.num_households },
+		geometry: geometryByAreaId.get(a.area_id),
+	}));
+
+	// 全エリアの世帯数が0の場合、e-Stat側のSETAI列の想定違い（列名変更等）の可能性が高い。
+	// extractMunicipalityは1エリアずつ「世帯数0」を警告する設計だが、全滅時は個別警告が
+	// 大量に出て本質的な問題が埋もれるため、集約した強い警告を先頭に追加する。
+	const allZero = features.length > 0 && features.every((f) => f.properties.num_households === 0);
+	const chomeWarnings = allZero
+		? [
+				`【要確認】CITY_NAME="${cityName}"の全${features.length}エリアで世帯数が0でした。町丁・字等境界データのSETAI列が取得できていない可能性があります。`,
+				...warnings,
+			]
+		: warnings;
+
+	return { geojson: { type: 'FeatureCollection', features }, warnings: chomeWarnings };
+}
+
+/**
+ * 指定市区町村の町丁・字等境界データ（＝「エリア」境界）を取得し、regions/<id>/ 相当のoutDirに
+ * boundary_chome.geojson を書き出す。都道府県コードはcityCodeの先頭2桁（全国地方公共団体コードの
+ * 仕様上、市区町村コードの先頭2桁がそのまま都道府県コード）から導出するため、追加入力は不要。
+ * 都道府県単位ダウンロードのため、同一都道府県内の別市区町村を後から追加する際はZIP/GeoJSONとも
+ * キャッシュがそのまま再利用される。
+ * @param {{ cityCode: string, cityName: string, outDir: string }} options
+ */
+export function fetchChomeBoundary({ cityCode, cityName, outDir }) {
+	const prefCode = cityCode.slice(0, 2);
+	const extractDir = downloadPrefectureShapefile(prefCode);
+	const shpPath = findShpFile(extractDir);
+	const geojsonPath = path.join(CACHE_DIR, `pref${prefCode}.geojson`);
+	if (!existsSync(geojsonPath)) {
+		convertToGeoJson(shpPath, geojsonPath);
+	} else {
+		console.log('(キャッシュ済みのGeoJSONを使用します: ' + geojsonPath + ')');
+	}
+
+	const featureCollection = JSON.parse(readFileSync(geojsonPath, 'utf8'));
+	const { geojson, warnings } = extractChomeBoundary(featureCollection, cityName);
+
+	mkdirSync(outDir, { recursive: true });
+	writeFileSync(path.join(outDir, 'boundary_chome.geojson'), JSON.stringify(geojson));
+
+	return { geojson, warnings, outDir };
+}
+
+/** 区画（基本単位区）ごとのchome_area_id（scripts/lib/geo.mjsのassignChomeAreaIdsが算出したもの）を
+ *  areasテーブルへ反映するグループ化UPDATE文を生成する（同一chome_area_idの区画をIN(...)でまとめ、
+ *  UPDATE_CHUNK_SIZEごとに分割してD1のSQL文長制限を回避）。scripts/new-region.mjsと
+ *  scripts/backfill-chome-area-id.mjsの両方から共有される。
+ * @param {Map<string,string>} chomeAreaIdByAreaId area_id -> chome_area_id
+ * @param {string[]} warnings 空間結合時の警告（コメントとして出力SQLの先頭に残す）
+ */
+export function buildChomeAreaIdUpdateSql(chomeAreaIdByAreaId, warnings = []) {
+	const groups = new Map(); // chome_area_id -> area_id[]
+	for (const [areaId, chomeAreaId] of chomeAreaIdByAreaId) {
+		if (!groups.has(chomeAreaId)) groups.set(chomeAreaId, []);
+		groups.get(chomeAreaId).push(areaId);
+	}
+	const lines = [
+		'-- areas.chome_area_id の一括反映（scripts/lib/estat-boundary.mjs buildChomeAreaIdUpdateSql で自動生成）。',
+		'-- area_id自体・他の列は変更しない。',
+		`-- 対象: ${chomeAreaIdByAreaId.size}区画 / ${groups.size}エリア`,
+	];
+	if (warnings.length > 0) {
+		lines.push('--', '-- 【要確認】空間結合の警告:');
+		for (const w of warnings) lines.push(`--   ${w}`);
+	}
+	for (const [chomeAreaId, areaIds] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+		for (let i = 0; i < areaIds.length; i += UPDATE_CHUNK_SIZE) {
+			const chunk = areaIds.slice(i, i + UPDATE_CHUNK_SIZE);
+			const list = chunk.map((id) => `'${escapeSql(id)}'`).join(', ');
+			lines.push(`UPDATE areas SET chome_area_id = '${escapeSql(chomeAreaId)}' WHERE area_id IN (${list});`);
+		}
+	}
+	return lines.join('\n') + '\n';
 }

@@ -7,8 +7,11 @@
 システム全体で以下の用語を統一して使用する（issue#1で定義）。
 
 - **エリア**: 町丁目単位の領域。地図上は紺色の境界線で表示される（`public/data/regions/<地域ID>/boundary_chome.geojson`、
-  表示専用・クリック不可の補助レイヤー。大和市専用データの遺物であり、`wrangler.jsonc`の
-  `env.<id>.vars.HAS_CHOME_BOUNDARY`が真の地域のみ存在する）。データ上は `areas` テーブルの
+  表示専用・クリック不可の補助レイヤー。`wrangler.jsonc`の`env.<id>.vars.HAS_CHOME_BOUNDARY`が真の
+  地域のみ存在する）。`npm run new-region`のエリア境界レイヤー有効化ステップでe-Statの町丁・字等
+  境界データから自動取得できる（`scripts/lib/estat-boundary.mjs`の`fetchChomeBoundary`。既存地域への
+  後付けは`scripts/backfill-chome-area-id.mjs`）。大和市分のみ、基本単位区への格上げ前データの遺物
+  として例外的に存在する。データ上は `areas` テーブルの
   `chome_area_id`（`boundary_chome.geojson`の各境界ポリゴンが持つe-Stat KEY_CODEをそのまま転用したもの）
   で識別される。区画がどの境界ポリゴンに
   属するかは空間結合（`scripts/lib/geo.mjs`）で算出する。「エリア担当」（`areas.area_manager_id` /

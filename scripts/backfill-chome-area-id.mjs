@@ -1,54 +1,88 @@
+#!/usr/bin/env node
 /**
- * issue#12対応: 大和市の既存地域マスタに chome_area_id（区画が属する「エリア」＝
- * boundary_chome.geojsonの境界ポリゴンのarea_id）を空間結合で算出し、
- *   1. migrations/0005_backfill_chome_area_id_yamato.sql（既存DB向け・グループ化UPDATE文）
- *   2. regions/14213-yamato/areas.sql（フレッシュDB向け・chome_area_id列を含む形に再生成）
- * を出力する。あわせて、town+chome単位の旧グルーピングとchome_area_id単位の新グルーピングの
- * 差分（下鶴間等が分離されること）をコンソールに要約表示する。
+ * issue#12対応: 既にデプロイ済みの地域に、後から「エリア」機能（areas.chome_area_id、
+ * boundary_chome.geojsonの境界ポリゴンとの空間結合で算出）を追加するための汎用CLI。
+ * 新規地域の立上げ時は scripts/new-region.mjs が同等の処理を自動で行うため、このスクリプトは
+ * 既にデプロイ済みの地域向け（大和市の chome_area_id もこのスクリプトの前身版で算出した）。
  *
- * 前提: .cache/estat-boundary/city14213.geojson（基本単位区の生データ、npm run fetch-boundary-data
- * 実行時にキャッシュ済み）と public/data/regions/14213-yamato/boundary_chome.geojson が存在すること。
+ * 出力:
+ *   1. migrations/backfill_chome_area_id_<region>.sql（既存DB向け・グループ化UPDATE文。
+ *      出力後、migrations/ の連番規則に合わせて手動でリネームすること）
+ *   2. regions/<region>/areas.sql（フレッシュDB向け・chome_area_id列を含む形に再生成）
+ * あわせて、town+chome単位の旧グルーピングとchome_area_id単位の新グルーピングの
+ * 差分をコンソールに要約表示する。
  *
- * 実行方法: node scripts/backfill-chome-area-id.mjs
+ * 前提: ネットワーク到達性（www.e-stat.go.jp）。基本単位区データのキャッシュ
+ * （.cache/estat-boundary/city<cityCode>.geojson）・エリア境界データ
+ * （regions/<region>/boundary_chome.geojson）が無ければ自動取得する。
+ *
+ * 使い方:
+ *   node scripts/backfill-chome-area-id.mjs --region 14213-yamato --city 大和市 --cityCode 14213
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractMunicipality, buildAreasSql } from './lib/estat-boundary.mjs';
+import { extractMunicipality, buildAreasSql, fetchCityBoundary, fetchChomeBoundary, buildChomeAreaIdUpdateSql } from './lib/estat-boundary.mjs';
 import { assignChomeAreaIds } from './lib/geo.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CITY_CODE = '14213';
-const CITY_NAME = '大和市';
-const CACHE_GEOJSON = path.join(REPO_ROOT, '.cache', 'estat-boundary', `city${CITY_CODE}.geojson`);
-const CHOME_BOUNDARY_PATH = path.join(REPO_ROOT, 'public', 'data', 'regions', '14213-yamato', 'boundary_chome.geojson');
-const SEED_PATH = path.join(REPO_ROOT, 'regions', '14213-yamato', 'areas.sql');
-const MIGRATION_PATH = path.join(REPO_ROOT, 'migrations', '0005_backfill_chome_area_id_yamato.sql');
 
-/** 1つのUPDATE文のIN(...)に含めるarea_id数の上限（D1のSQL文長制限を避けるための安全マージン）。 */
-const UPDATE_CHUNK_SIZE = 500;
-
-function escapeSql(s) {
-	return s.replace(/'/g, "''");
+function parseArgs(argv) {
+	const args = {};
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === '--region') args.region = argv[++i];
+		else if (arg === '--city') args.city = argv[++i];
+		else if (arg === '--cityCode') args.cityCode = argv[++i];
+		else if (arg === '--help' || arg === '-h') args.help = true;
+	}
+	return args;
 }
+
+function printUsageAndExit(code) {
+	console.log(
+		[
+			'使い方: node scripts/backfill-chome-area-id.mjs --region <地域ID> --city <e-StatのCITY_NAME> --cityCode <5桁市区町村コード>',
+			'例:     node scripts/backfill-chome-area-id.mjs --region 14213-yamato --city 大和市 --cityCode 14213',
+			'',
+			'既にデプロイ済みの地域に、後から「エリア」機能（chome_area_id）を追加する。',
+			'migrations/backfill_chome_area_id_<region>.sql は出力後、migrations/ の連番規則に',
+			'合わせて手動でリネームすること。',
+		].join('\n'),
+	);
+	process.exit(code);
+}
+
+const args = parseArgs(process.argv.slice(2));
+if (args.help || !args.region || !args.city || !args.cityCode) printUsageAndExit(args.help ? 0 : 1);
+
+const { region, city: CITY_NAME, cityCode: CITY_CODE } = args;
+const REGION_DIR = path.join(REPO_ROOT, 'regions', region);
+const CACHE_GEOJSON = path.join(REPO_ROOT, '.cache', 'estat-boundary', `city${CITY_CODE}.geojson`);
+const REGION_CHOME_BOUNDARY_PATH = path.join(REGION_DIR, 'boundary_chome.geojson');
+const PUBLIC_CHOME_BOUNDARY_PATH = path.join(REPO_ROOT, 'public', 'data', 'regions', region, 'boundary_chome.geojson');
+const SEED_PATH = path.join(REGION_DIR, 'areas.sql');
+const MIGRATION_PATH = path.join(REPO_ROOT, 'migrations', `backfill_chome_area_id_${region}.sql`);
 
 function main() {
 	if (!existsSync(CACHE_GEOJSON)) {
-		console.error(`キャッシュが見つかりません: ${CACHE_GEOJSON}`);
-		console.error('先に `npm run fetch-boundary-data -- --region ... --city 大和市 --cityCode 14213` 等でキャッシュを作成するか、');
-		console.error('ネットワーク到達可能な環境で実行してください。');
-		process.exit(1);
+		console.log(`基本単位区の境界データが未取得のため、e-Statから取得します（${CITY_NAME}, ${CITY_CODE}）...`);
+		fetchCityBoundary({ cityCode: CITY_CODE, cityName: CITY_NAME, outDir: REGION_DIR });
 	}
-	if (!existsSync(CHOME_BOUNDARY_PATH)) {
-		console.error(`チョーム境界データが見つかりません: ${CHOME_BOUNDARY_PATH}`);
-		process.exit(1);
+	if (!existsSync(REGION_CHOME_BOUNDARY_PATH)) {
+		console.log(`エリア境界データが未取得のため、e-Statから取得します（${CITY_NAME}, ${CITY_CODE}）...`);
+		fetchChomeBoundary({ cityCode: CITY_CODE, cityName: CITY_NAME, outDir: REGION_DIR });
+	}
+	if (!existsSync(PUBLIC_CHOME_BOUNDARY_PATH)) {
+		mkdirSync(path.dirname(PUBLIC_CHOME_BOUNDARY_PATH), { recursive: true });
+		writeFileSync(PUBLIC_CHOME_BOUNDARY_PATH, readFileSync(REGION_CHOME_BOUNDARY_PATH));
 	}
 
 	const featureCollection = JSON.parse(readFileSync(CACHE_GEOJSON, 'utf8'));
 	const { areas, geojson: blockGeojson, warnings: extractWarnings } = extractMunicipality(featureCollection, CITY_NAME);
 
-	const chomeGeojson = JSON.parse(readFileSync(CHOME_BOUNDARY_PATH, 'utf8'));
+	const chomeGeojson = JSON.parse(readFileSync(PUBLIC_CHOME_BOUNDARY_PATH, 'utf8'));
 
 	const { chomeAreaIdByAreaId, warnings: spatialWarnings } = assignChomeAreaIds(blockGeojson.features, chomeGeojson.features);
 
@@ -106,31 +140,14 @@ function main() {
 		a.chome_area_id = chomeAreaIdByAreaId.get(a.area_id) ?? a.area_id;
 	}
 
-	// --- regions/14213-yamato/areas.sql 再生成 ---
+	// --- regions/<region>/areas.sql 再生成 ---
 	const allWarnings = [...extractWarnings, ...spatialWarnings];
 	writeFileSync(SEED_PATH, buildAreasSql(CITY_NAME, areas, allWarnings));
 	console.log(`\n${SEED_PATH} を再生成しました（${areas.length}行）。`);
 
-	// --- migrations/0005: 既存DB向けのグループ化UPDATE文 ---
-	const groups = new Map(); // chome_area_id -> area_id[]
-	for (const a of areas) {
-		if (!groups.has(a.chome_area_id)) groups.set(a.chome_area_id, []);
-		groups.get(a.chome_area_id).push(a.area_id);
-	}
-	const lines = [
-		'-- issue#12対応: areas.chome_area_id のバックフィル（大和市、既存DB向け）。',
-		'-- scripts/backfill-chome-area-id.mjs で自動生成。area_id自体・他の列は変更しない。',
-		`-- 対象: ${areas.length}区画 / ${groups.size}エリア`,
-	];
-	for (const [chomeAreaId, areaIds] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-		for (let i = 0; i < areaIds.length; i += UPDATE_CHUNK_SIZE) {
-			const chunk = areaIds.slice(i, i + UPDATE_CHUNK_SIZE);
-			const list = chunk.map((id) => `'${escapeSql(id)}'`).join(', ');
-			lines.push(`UPDATE areas SET chome_area_id = '${escapeSql(chomeAreaId)}' WHERE area_id IN (${list});`);
-		}
-	}
-	writeFileSync(MIGRATION_PATH, lines.join('\n') + '\n');
-	console.log(`${MIGRATION_PATH} を生成しました（${groups.size}エリア、${lines.length - 3}文）。`);
+	// --- migrations/backfill_chome_area_id_<region>.sql: 既存DB向けのグループ化UPDATE文 ---
+	writeFileSync(MIGRATION_PATH, buildChomeAreaIdUpdateSql(chomeAreaIdByAreaId, spatialWarnings));
+	console.log(`${MIGRATION_PATH} を生成しました。migrations/ の連番規則に合わせてリネームしてください。`);
 }
 
 main();
