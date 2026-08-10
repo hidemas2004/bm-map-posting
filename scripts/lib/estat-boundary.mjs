@@ -10,7 +10,8 @@
  * できない点に注意（`BLOCK_SURVEY_ID`のシェープファイルは対象市区町村分のみを含み、`CHOME_SURVEY_ID`
  * のシェープファイルは同一都道府県内の他市区町村分も含む）。
  *
- * 注意: このスクリプトの実行には `curl`・`unzip`・ネットワーク到達性
+ * 注意: このスクリプトの実行には `curl`・zip展開コマンド（`unzip`、無ければ`tar`にフォールバック。
+ * Windows 10 1803+/11・macOSは標準搭載のtarで展開可能）・ネットワーク到達性
  * （www.e-stat.go.jp、npx経由のmapshaperダウンロード）が必要。ネットワークが制限された環境
  * （一部のサンドボックス等）では失敗するため、その場合はPC等の到達可能な環境で実行すること。
  */
@@ -224,9 +225,21 @@ function downloadShapefile({ surveyId, code, cacheKeyPrefix, logLabel }) {
 
 	if (!existsSync(extractDir) || readdirSync(extractDir).length === 0) {
 		mkdirSync(extractDir, { recursive: true });
-		execFileSync('unzip', ['-o', zipPath, '-d', extractDir], { stdio: 'inherit' });
+		extractZip(zipPath, extractDir);
 	}
 	return extractDir;
+}
+
+/** unzipが無い環境（Windows既定）向けに、Windows 10 1803+/11に標準搭載のtar.exe（bsdtar。zip形式を
+ *  自動判別して展開できる）へフォールバックする。macOS標準のtarもbsdtar系のため同様に動作する。 */
+function extractZip(zipPath, extractDir) {
+	try {
+		execFileSync('unzip', ['-o', zipPath, '-d', extractDir], { stdio: 'inherit' });
+	} catch (err) {
+		if (err.code !== 'ENOENT') throw err;
+		console.log('(unzipが見つからないため tar で展開します)');
+		execFileSync('tar', ['-xf', zipPath, '-C', extractDir], { stdio: 'inherit' });
+	}
 }
 
 function downloadMunicipalityShapefile(cityCode) {
@@ -245,7 +258,12 @@ function findShpFile(dir) {
 
 function convertToGeoJson(shpPath, outPath) {
 	console.log('mapshaperでGeoJSONに変換中...');
-	execFileSync('npx', ['--yes', 'mapshaper', '-i', shpPath, '-o', 'format=geojson', outPath], { stdio: 'inherit' });
+	// Windowsでは npx（実体は npx.cmd）を execFileSync が直接起動できない（ENOENT）ため shell 経由にする
+	// （scripts/new-region.mjs の run() ヘルパーと同じ対処）。
+	execFileSync('npx', ['--yes', 'mapshaper', '-i', shpPath, '-o', 'format=geojson', outPath], {
+		stdio: 'inherit',
+		shell: process.platform === 'win32',
+	});
 }
 
 /**
