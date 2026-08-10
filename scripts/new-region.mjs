@@ -10,7 +10,6 @@
  * 前提: `npx wrangler login` 済みであること（D1作成・デプロイでCloudflare認証が必要）。
  */
 
-import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -22,6 +21,7 @@ import { appendEnvBlock, envExists } from './lib/wrangler-jsonc.mjs';
 import { fetchCityBoundary, fetchChomeBoundary, buildChomeAreaIdUpdateSql } from './lib/estat-boundary.mjs';
 import { assignChomeAreaIds } from './lib/geo.mjs';
 import { computeCenterFromGeoJson } from './lib/geojson-bbox.mjs';
+import { execCommand } from './lib/win-exec.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC_DIR = path.join(REPO_ROOT, 'public');
@@ -40,8 +40,7 @@ function publicRegionDataDir(id) {
 function run(cmd, args, options = {}) {
 	console.log(`\n$ ${cmd} ${args.join(' ')}`);
 	const stdio = options.input ? ['pipe', options.silent ? 'pipe' : 'inherit', 'inherit'] : options.silent ? 'pipe' : 'inherit';
-	// Windowsでは npx 等の .cmd ラッパーを execFileSync が直接起動できない（EINVAL）ため shell 経由にする。
-	return execFileSync(cmd, args, { encoding: 'utf8', cwd: REPO_ROOT, shell: process.platform === 'win32', ...options, stdio });
+	return execCommand(cmd, args, { encoding: 'utf8', cwd: REPO_ROOT, ...options, stdio });
 }
 
 function extractDatabaseId(wranglerOutput) {

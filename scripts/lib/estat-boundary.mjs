@@ -20,6 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execCommand } from './win-exec.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CACHE_DIR = path.join(REPO_ROOT, '.cache', 'estat-boundary');
@@ -258,12 +259,7 @@ function findShpFile(dir) {
 
 function convertToGeoJson(shpPath, outPath) {
 	console.log('mapshaperでGeoJSONに変換中...');
-	// Windowsでは npx（実体は npx.cmd）を execFileSync が直接起動できない（ENOENT）ため shell 経由にする
-	// （scripts/new-region.mjs の run() ヘルパーと同じ対処）。
-	execFileSync('npx', ['--yes', 'mapshaper', '-i', shpPath, '-o', 'format=geojson', outPath], {
-		stdio: 'inherit',
-		shell: process.platform === 'win32',
-	});
+	execCommand('npx', ['--yes', 'mapshaper', '-i', shpPath, '-o', 'format=geojson', outPath], { stdio: 'inherit' });
 }
 
 /**
