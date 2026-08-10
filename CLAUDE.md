@@ -6,9 +6,11 @@
 
 システム全体で以下の用語を統一して使用する（issue#1で定義）。
 
-- **エリア**: 町丁目単位の領域。地図上は紺色の境界線で表示される（`public/data/boundary_chome.geojson`、
-  表示専用・クリック不可の補助レイヤー）。データ上は `areas` テーブルの `chome_area_id`（`boundary_chome.geojson`
-  の各境界ポリゴンが持つe-Stat KEY_CODEをそのまま転用したもの）で識別される。区画がどの境界ポリゴンに
+- **エリア**: 町丁目単位の領域。地図上は紺色の境界線で表示される（`public/data/regions/<地域ID>/boundary_chome.geojson`、
+  表示専用・クリック不可の補助レイヤー。大和市専用データの遺物であり、`wrangler.jsonc`の
+  `env.<id>.vars.HAS_CHOME_BOUNDARY`が真の地域のみ存在する）。データ上は `areas` テーブルの
+  `chome_area_id`（`boundary_chome.geojson`の各境界ポリゴンが持つe-Stat KEY_CODEをそのまま転用したもの）
+  で識別される。区画がどの境界ポリゴンに
   属するかは空間結合（`scripts/lib/geo.mjs`）で算出する。「エリア担当」（`areas.area_manager_id` /
   `area_manager_name`）はこの単位で設定する。
   （旧仕様: `town` + `chome` の文字列組で識別していたが、e-Statが同一町名を複数KEY_CODEに分割している
@@ -21,6 +23,17 @@
 「エリア担当」と「担当者」は別概念（前者はエリア単位、後者は区画単位）。エリア担当を設定すると、
 同一エリア内の全区画（世帯数0を除く）の担当者が一律でそのエリア担当に置き換わる（既存の担当者設定も
 上書きする。詳細は `worker/records.ts` の `setAreaManager` のコメント参照）。
+
+## 地域設定・境界データ（`/config.js`）
+
+`public/config.js`という静的ファイルは存在しない。`/config.js`へのリクエストは
+`worker/index.ts`が`worker/config.ts`の`buildConfigResponse(env)`を呼んで動的に生成する
+（地域固有の表示名・地図初期座標・ズーム・チョーム境界レイヤー有無は`wrangler.jsonc`の
+`env.<地域ID>.vars`から、色・しきい値等の共通見た目パラメータは`worker/config.ts`にハード
+コードされたもの）。境界GeoJSONも地域ごとに`public/data/regions/<地域ID>/boundary.geojson`
+という固有パスに恒久的に配置されており、「地域を切り替えるとファイルが差し替わる」という
+可変状態は存在しない（過去そのような設計だった際の事故リスクを踏まえて撤廃した）。
+新しい地域の追加は`npm run new-region`（`scripts/new-region.mjs`）を参照。
 
 ## CSS上の注意（`public/style.css`）
 

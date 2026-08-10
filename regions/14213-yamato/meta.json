@@ -1,0 +1,16 @@
+{
+  "displayName": "大和市",
+  "cityName": "大和市",
+  "cityCode": "14213",
+  "mapCenter": [
+    35.4717,
+    139.4549
+  ],
+  "mapZoom": 13,
+  "hasChomeBoundary": true,
+  "adminUserId": "admin",
+  "adminName": "管理者",
+  "databaseId": "33663a66-7b1e-4bf4-952d-d77c2b8ab852",
+  "dbSeeded": true,
+  "secretsSet": true
+}

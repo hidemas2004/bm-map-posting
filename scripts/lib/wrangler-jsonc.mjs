@@ -107,8 +107,10 @@ function insertBeforeClose(text, closeBraceIndex, newLines, indent) {
 /**
  * wrangler.jsonc に env.<regionId> ブロックを追記する。
  * 既存の内容・コメントの書き換えは一切行わず、追記のみ行う。書き込み前に構文検証する。
+ * vars を渡した場合、地域固有の環境変数（表示名・地図初期座標・境界データの有無等）も
+ * 併せて書き込む（worker/config.ts が /config.js を動的生成する際に参照する）。
  */
-export function appendEnvBlock(regionId, { workerName, d1DatabaseName, databaseId }) {
+export function appendEnvBlock(regionId, { workerName, d1DatabaseName, databaseId, vars }) {
 	if (envExists(regionId)) {
 		throw new Error(`env.${regionId} は既にwrangler.jsoncに存在します`);
 	}
@@ -125,9 +127,17 @@ export function appendEnvBlock(regionId, { workerName, d1DatabaseName, databaseI
 		`      "database_name": "${d1DatabaseName}",`,
 		`      "database_id": "${databaseId}"`,
 		`    }`,
-		`  ]`,
-		`}`,
+		`  ]${vars ? ',' : ''}`,
 	];
+	if (vars) {
+		const varEntries = Object.entries(vars);
+		entryLines.push(
+			'  "vars": {',
+			...varEntries.map(([k, v], i) => `    ${JSON.stringify(k)}: ${JSON.stringify(v)}${i < varEntries.length - 1 ? ',' : ''}`),
+			'  }',
+		);
+	}
+	entryLines.push('}');
 
 	let newText;
 	if (config.env) {

@@ -3,15 +3,16 @@
  * 新しい市区町村を並行稼働で追加するための対話スクリプト。
  *   npm run new-region
  *
- * wrangler.jsonc のトップレベル（既存の大和市本番設定）は一切変更しない。新しい市は
- * env.<region-id> の名前付き環境として追加し、独立したWorker・D1データベースでデプロイする。
+ * 全ての地域（大和市を含む）は env.<region-id> の名前付き環境として追加し、独立した
+ * Worker・D1データベースでデプロイする。「無名のデフォルト環境」は存在しない設計
+ * （詳細はREADME「複数地域の並行運用」）。
  *
  * 前提: `npx wrangler login` 済みであること（D1作成・デプロイでCloudflare認証が必要）。
  */
 
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,13 +20,18 @@ import { fileURLToPath } from 'node:url';
 import { ask, confirm, closePrompt } from './lib/prompt.mjs';
 import { appendEnvBlock, envExists } from './lib/wrangler-jsonc.mjs';
 import { fetchCityBoundary } from './lib/estat-boundary.mjs';
-import { buildConfigJs, computeCenterFromGeoJson } from './lib/config-template.mjs';
+import { computeCenterFromGeoJson } from './lib/geojson-bbox.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC_DIR = path.join(REPO_ROOT, 'public');
+const NPX = 'npx';
 
 function regionDir(id) {
 	return path.join(REPO_ROOT, 'regions', id);
+}
+
+function publicRegionDataDir(id) {
+	return path.join(PUBLIC_DIR, 'data', 'regions', id);
 }
 
 /** silent: stdout/stderrを表示せず戻り値として返す。input: 子プロセスの標準入力に書き込む文字列
@@ -33,7 +39,8 @@ function regionDir(id) {
 function run(cmd, args, options = {}) {
 	console.log(`\n$ ${cmd} ${args.join(' ')}`);
 	const stdio = options.input ? ['pipe', options.silent ? 'pipe' : 'inherit', 'inherit'] : options.silent ? 'pipe' : 'inherit';
-	return execFileSync(cmd, args, { encoding: 'utf8', cwd: REPO_ROOT, ...options, stdio });
+	// Windowsでは npx 等の .cmd ラッパーを execFileSync が直接起動できない（EINVAL）ため shell 経由にする。
+	return execFileSync(cmd, args, { encoding: 'utf8', cwd: REPO_ROOT, shell: process.platform === 'win32', ...options, stdio });
 }
 
 function extractDatabaseId(wranglerOutput) {
@@ -44,10 +51,15 @@ function extractDatabaseId(wranglerOutput) {
 	return null;
 }
 
+function extractDeployedUrl(wranglerOutput) {
+	const match = wranglerOutput.match(/https:\/\/\S+\.workers\.dev\S*/);
+	return match ? match[0].replace(/\/+$/, '') : null;
+}
+
 async function main() {
 	console.log('=== bm-map-posting: 新規地域の並行ローンチ ===\n');
 
-	let regionId = await ask('地域ID（例: 202704-hiratsuka。英数字とハイフンのみ）');
+	let regionId = await ask('地域ID（例: 14213-yamato。市区町村コード5桁+ローマ字市名を推奨。英数字とハイフンのみ）');
 	regionId = regionId.trim().toLowerCase();
 	if (!/^[a-z0-9-]+$/.test(regionId)) {
 		console.error('エラー: 地域IDは英小文字・数字・ハイフンのみ使用できます。');
@@ -108,6 +120,14 @@ async function main() {
 		}
 	}
 
+	// --- 恒久的な配信パスへのコピー ---
+	// public/data/regions/<id>/ は地域ごとに固有のパスなので、以後「切り替え」は発生しない
+	// （旧方式は public/config.js・public/data/boundary.geojson をデプロイ直前に上書きしていたため、
+	// 誤ってコミットすると別地域の内容が本番設定として混入するリスクがあった）。
+	const publicDataDir = publicRegionDataDir(regionId);
+	mkdirSync(publicDataDir, { recursive: true });
+	writeFileSync(path.join(publicDataDir, 'boundary.geojson'), readFileSync(boundaryPath));
+
 	// --- 地図初期表示設定 ---
 	const boundaryGeoJson = JSON.parse(readFileSync(boundaryPath, 'utf8'));
 	const suggestedCenter = computeCenterFromGeoJson(boundaryGeoJson);
@@ -124,14 +144,31 @@ async function main() {
 	}
 	meta.mapZoom = meta.mapZoom ?? Number(await ask('地図初期ズームレベル', { defaultValue: '13' }));
 	writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-	writeFileSync(
-		path.join(dir, 'config.js'),
-		buildConfigJs({ displayName: meta.displayName, center: meta.mapCenter, zoom: meta.mapZoom }),
-	);
+
+	// --- 丁目境界（チョーム境界）レイヤーの有無 ---
+	// 大和市の boundary_chome.geojson は基本単位区への格上げ前データの遺物として例外的に存在する
+	// 補助レイヤーであり、他地域での取得手順は未整備（README「今後の課題」参照）。用意できる場合のみ
+	// 有効化する任意機能として扱う。
+	if (meta.hasChomeBoundary === undefined) {
+		meta.hasChomeBoundary = await confirm(
+			'丁目単位の境界線（チョーム境界）レイヤーをこの地域でも表示しますか？（表示専用の補助レイヤー。取得手順は別途用意が必要）',
+			{ defaultValue: false },
+		);
+		writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+	}
+	if (meta.hasChomeBoundary) {
+		const chomeBoundaryDestPath = path.join(publicDataDir, 'boundary_chome.geojson');
+		if (!existsSync(chomeBoundaryDestPath)) {
+			console.log(`\n${path.relative(REPO_ROOT, chomeBoundaryDestPath)} を用意してください（丁目単位の境界線GeoJSON）。`);
+			while (!existsSync(chomeBoundaryDestPath)) {
+				await ask('準備ができたらEnterを押してください', { defaultValue: ' ' });
+			}
+		}
+	}
 
 	// --- 初期管理者ユーザー ---
 	// 合言葉は平文の秘密情報なので meta.json（gitで追跡される）には一切書き込まない。
-	// DB投入が完了するまでの間だけメモリ上に保持する。
+	// DB投入・ログイン確認が完了するまでの間だけメモリ上に保持する。
 	let adminPassphrase;
 	if (!meta.dbSeeded) {
 		console.log('\n--- 初期管理者ユーザーの登録 ---');
@@ -157,7 +194,7 @@ async function main() {
 			closePrompt();
 			return;
 		}
-		const output = run('npx', ['wrangler', 'd1', 'create', d1DatabaseName], { silent: true });
+		const output = run(NPX, ['wrangler', 'd1', 'create', d1DatabaseName], { silent: true });
 		console.log(output);
 		databaseId = extractDatabaseId(output);
 		if (!databaseId) {
@@ -169,19 +206,31 @@ async function main() {
 
 	// --- wrangler.jsonc へのenv追記 ---
 	if (!envExists(regionId)) {
-		appendEnvBlock(regionId, { workerName, d1DatabaseName, databaseId });
+		appendEnvBlock(regionId, {
+			workerName,
+			d1DatabaseName,
+			databaseId,
+			vars: {
+				REGION_ID: regionId,
+				REGION_DISPLAY_NAME: meta.displayName,
+				MAP_CENTER_LAT: meta.mapCenter[0],
+				MAP_CENTER_LNG: meta.mapCenter[1],
+				MAP_ZOOM: meta.mapZoom,
+				HAS_CHOME_BOUNDARY: meta.hasChomeBoundary,
+			},
+		});
 		console.log(`\nwrangler.jsonc に env.${regionId} を追記しました。`);
 	}
 
 	// --- マイグレーション・地域マスタ・初期管理者の投入 ---
 	if (!meta.dbSeeded) {
 		console.log('\n--- D1へのマイグレーション・データ投入 ---');
-		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0001_init.sql']);
-		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0002_areas_block_level.sql']);
-		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0003_area_manager.sql']);
-		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0004_chome_area_id.sql']);
-		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0006_polling_stations.sql']);
-		run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${path.relative(REPO_ROOT, areasSqlPath)}`]);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0001_init.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0002_areas_block_level.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0003_area_manager.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0004_chome_area_id.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--file=migrations/0006_polling_stations.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${path.relative(REPO_ROOT, areasSqlPath)}`]);
 
 		// 合言葉が平文で入るSQLはリポジトリ外（OS一時ディレクトリ）に書き、投入後に必ず削除する。
 		const esc = (s) => s.replace(/'/g, "''");
@@ -189,7 +238,7 @@ async function main() {
 		const adminSqlPath = path.join(os.tmpdir(), `bm-map-posting-admin-${regionId}-${crypto.randomUUID()}.sql`);
 		writeFileSync(adminSqlPath, adminSql);
 		try {
-			run('npx', ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${adminSqlPath}`]);
+			run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', `--file=${adminSqlPath}`]);
 		} finally {
 			rmSync(adminSqlPath, { force: true });
 		}
@@ -203,8 +252,8 @@ async function main() {
 		console.log('\n--- Secretsの自動生成・設定 ---');
 		const sessionSecret = crypto.randomBytes(32).toString('hex');
 		const areasImportToken = crypto.randomBytes(32).toString('hex');
-		run('npx', ['wrangler', 'secret', 'put', 'SESSION_SECRET', '--env', regionId], { input: sessionSecret + '\n' });
-		run('npx', ['wrangler', 'secret', 'put', 'AREAS_IMPORT_TOKEN', '--env', regionId], { input: areasImportToken + '\n' });
+		run(NPX, ['wrangler', 'secret', 'put', 'SESSION_SECRET', '--env', regionId], { input: sessionSecret + '\n' });
+		run(NPX, ['wrangler', 'secret', 'put', 'AREAS_IMPORT_TOKEN', '--env', regionId], { input: areasImportToken + '\n' });
 		meta.secretsSet = true;
 		writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 		console.log('(値はCloudflare側にのみ保存され、このスクリプトの出力には表示されません)');
@@ -212,14 +261,15 @@ async function main() {
 
 	// --- デプロイ前の最終確認 ---
 	console.log('\n=== デプロイ内容の確認 ===');
-	console.log(`  地域ID:          ${regionId}`);
-	console.log(`  表示名:           ${meta.displayName}`);
-	console.log(`  Worker名:         ${workerName}`);
-	console.log(`  D1データベース:   ${d1DatabaseName} (${databaseId})`);
-	console.log(`  地図初期座標:     [${meta.mapCenter.join(', ')}]  ズーム: ${meta.mapZoom}`);
-	console.log(`  管理者ユーザーID: ${meta.adminUserId}`);
+	console.log(`  地域ID:            ${regionId}`);
+	console.log(`  表示名:             ${meta.displayName}`);
+	console.log(`  Worker名:           ${workerName}`);
+	console.log(`  D1データベース:     ${d1DatabaseName} (${databaseId})`);
+	console.log(`  地図初期座標:       [${meta.mapCenter.join(', ')}]  ズーム: ${meta.mapZoom}`);
+	console.log(`  チョーム境界レイヤー: ${meta.hasChomeBoundary ? '有効' : '無効'}`);
+	console.log(`  管理者ユーザーID:   ${meta.adminUserId}`);
 	if (warnings.length > 0) {
-		console.log(`  要確認事項:       ${warnings.length}件（regions/${regionId}/areas.sql 内のコメント参照）`);
+		console.log(`  要確認事項:         ${warnings.length}件（regions/${regionId}/areas.sql 内のコメント参照）`);
 	}
 	console.log('');
 
@@ -230,17 +280,59 @@ async function main() {
 		return;
 	}
 
-	copyFileSync(path.join(dir, 'config.js'), path.join(PUBLIC_DIR, 'config.js'));
-	copyFileSync(boundaryPath, path.join(PUBLIC_DIR, 'data', 'boundary.geojson'));
-	console.log(`\n(public/config.js, public/data/boundary.geojson を ${regionId} の内容に切り替えました)`);
+	console.log('\n--- デプロイ ---');
+	const deployOutput = run(NPX, ['wrangler', 'deploy', '--env', regionId], { silent: true });
+	console.log(deployOutput);
+	let deployedUrl = extractDeployedUrl(deployOutput);
 
-	run('npx', ['wrangler', 'deploy', '--env', regionId]);
+	// --- 投票所データの投入（任意。regions/<id>/polling_stations.csv がある場合のみ）---
+	// 座標の測地系（日本測地系/世界測地系）自動検出・補正（issue#16対応）はWorker内で完結するロジック
+	// のため、Node側でSQLに変換して直接投入せず、実際にデプロイされたWorkerのAPIをそのまま叩く。
+	const pollingCsvPath = path.join(dir, 'polling_stations.csv');
+	if (existsSync(pollingCsvPath) && !meta.pollingStationsSeeded) {
+		console.log('\n--- 投票所データの投入 ---');
+		if (!deployedUrl) {
+			deployedUrl = await ask('デプロイ先URLを自動抽出できませんでした。投票所データ投入のため、URLを貼り付けてください');
+		}
+		if (!adminPassphrase) {
+			adminPassphrase = await ask(`管理者「${meta.adminUserId}」の合言葉を再入力してください（投票所データ投入のログインに使用）`);
+		}
+		try {
+			const loginRes = await fetch(`${deployedUrl}/api/login`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ user_id: meta.adminUserId, passphrase: adminPassphrase }),
+			});
+			if (!loginRes.ok) {
+				console.error(`\n管理者ログインに失敗しました（${loginRes.status}）。投票所データの投入をスキップします。後で /polling-stations.html から手動でアップロードしてください。`);
+			} else {
+				const { token } = await loginRes.json();
+				const csvText = readFileSync(pollingCsvPath, 'utf8');
+				const importRes = await fetch(`${deployedUrl}/api/polling-stations/import`, {
+					method: 'POST',
+					headers: { Authorization: `Bearer ${token}`, 'content-type': 'text/csv' },
+					body: csvText,
+				});
+				if (!importRes.ok) {
+					console.error(`\n投票所データの投入に失敗しました（${importRes.status}）: ${await importRes.text()}`);
+					console.error('後で /polling-stations.html から手動でアップロードしてください。');
+				} else {
+					const result = await importRes.json();
+					console.log(`\n投票所データを${result.imported}件投入しました。`);
+					meta.pollingStationsSeeded = true;
+					writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+				}
+			}
+		} catch (err) {
+			console.error(`\n投票所データの投入中にエラーが発生しました: ${err.message}`);
+			console.error('後で /polling-stations.html から手動でアップロードしてください。');
+		}
+	}
 
 	console.log('\n=== 完了 ===');
-	console.log(`Worker「${workerName}」をデプロイしました（URLはデプロイログを参照）。`);
+	console.log(`Worker「${workerName}」をデプロイしました${deployedUrl ? `（${deployedUrl}）` : '（URLはデプロイログを参照）'}。`);
 	console.log(`ログイン: ユーザーID「${meta.adminUserId}」・上で入力した合言葉。`);
 	console.log('担当者の追加は /users.html のCSVインポート機能から行ってください。');
-	console.log(`現在 public/ は「${regionId}」の内容です。別地域を扱う場合は改めてこのスクリプトを実行してください。`);
 
 	closePrompt();
 }

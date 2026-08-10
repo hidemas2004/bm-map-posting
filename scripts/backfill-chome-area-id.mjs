@@ -2,12 +2,12 @@
  * issue#12対応: 大和市の既存地域マスタに chome_area_id（区画が属する「エリア」＝
  * boundary_chome.geojsonの境界ポリゴンのarea_id）を空間結合で算出し、
  *   1. migrations/0005_backfill_chome_area_id_yamato.sql（既存DB向け・グループ化UPDATE文）
- *   2. seed/areas_yamato.sql（フレッシュDB向け・chome_area_id列を含む形に再生成）
+ *   2. regions/14213-yamato/areas.sql（フレッシュDB向け・chome_area_id列を含む形に再生成）
  * を出力する。あわせて、town+chome単位の旧グルーピングとchome_area_id単位の新グルーピングの
  * 差分（下鶴間等が分離されること）をコンソールに要約表示する。
  *
  * 前提: .cache/estat-boundary/city14213.geojson（基本単位区の生データ、npm run fetch-boundary-data
- * 実行時にキャッシュ済み）と public/data/boundary_chome.geojson が存在すること。
+ * 実行時にキャッシュ済み）と public/data/regions/14213-yamato/boundary_chome.geojson が存在すること。
  *
  * 実行方法: node scripts/backfill-chome-area-id.mjs
  */
@@ -22,8 +22,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const CITY_CODE = '14213';
 const CITY_NAME = '大和市';
 const CACHE_GEOJSON = path.join(REPO_ROOT, '.cache', 'estat-boundary', `city${CITY_CODE}.geojson`);
-const CHOME_BOUNDARY_PATH = path.join(REPO_ROOT, 'public', 'data', 'boundary_chome.geojson');
-const SEED_PATH = path.join(REPO_ROOT, 'seed', 'areas_yamato.sql');
+const CHOME_BOUNDARY_PATH = path.join(REPO_ROOT, 'public', 'data', 'regions', '14213-yamato', 'boundary_chome.geojson');
+const SEED_PATH = path.join(REPO_ROOT, 'regions', '14213-yamato', 'areas.sql');
 const MIGRATION_PATH = path.join(REPO_ROOT, 'migrations', '0005_backfill_chome_area_id_yamato.sql');
 
 /** 1つのUPDATE文のIN(...)に含めるarea_id数の上限（D1のSQL文長制限を避けるための安全マージン）。 */
@@ -106,7 +106,7 @@ function main() {
 		a.chome_area_id = chomeAreaIdByAreaId.get(a.area_id) ?? a.area_id;
 	}
 
-	// --- seed/areas_yamato.sql 再生成 ---
+	// --- regions/14213-yamato/areas.sql 再生成 ---
 	const allWarnings = [...extractWarnings, ...spatialWarnings];
 	writeFileSync(SEED_PATH, buildAreasSql(CITY_NAME, areas, allWarnings));
 	console.log(`\n${SEED_PATH} を再生成しました（${areas.length}行）。`);

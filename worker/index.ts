@@ -6,6 +6,7 @@ import { recordDistribution, setAreaManager, setAssignee, type RecordsEnv } from
 import { exportActivityLogCsv, listActivityLog, type ActivityLogEnv } from './activity_log';
 import { deleteTerm, type ResetEnv } from './reset';
 import { importPollingStations, listPollingStations, type PollingStationsEnv } from './polling_stations';
+import { buildConfigResponse, type ConfigEnv } from './config';
 
 export interface Env
 	extends AuthEnv,
@@ -15,13 +16,20 @@ export interface Env
 		RecordsEnv,
 		ActivityLogEnv,
 		ResetEnv,
-		PollingStationsEnv {
+		PollingStationsEnv,
+		ConfigEnv {
 	ASSETS: { fetch(request: Request): Promise<Response> };
 }
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
+
+		if (url.pathname === '/config.js') {
+			return new Response(buildConfigResponse(env), {
+				headers: { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'no-store' },
+			});
+		}
 
 		if (url.pathname === '/api/login' && request.method === 'POST') {
 			return handleLogin(request, env);

@@ -693,7 +693,9 @@ async function init() {
 	state.activeUsers = await usersRes.json();
 	populateAssigneeFilterSelect();
 	await loadBoundary();
-	await loadChomeBoundary();
+	if (typeof CHOME_BOUNDARY_GEOJSON_PATH !== 'undefined') {
+		await loadChomeBoundary();
+	}
 	await loadPollingStations();
 	await loadTerms();
 }

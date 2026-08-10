@@ -1,19 +1,42 @@
-// 見た目・地域設定の調整値。地域を入れ替える際はこのファイルを書き換えるだけでよい。
+/**
+ * /config.js を地域ごとの env（wrangler.jsonc の vars）から動的生成する。
+ * 地域固有の値（表示名・地図初期座標・境界データパス）のみ env から埋め込み、
+ * 色・しきい値等の見た目パラメータは全地域共通としてここに一本化する
+ * （旧 scripts/lib/config-template.mjs は public/config.js との内容ドリフトが生じていたため廃止）。
+ */
 
-// 対象地域表示名・地図初期中心座標・初期ズームレベル（汎用化設計）
-const REGION_DISPLAY_NAME = '大和市';
-const MAP_INITIAL_CENTER = [35.4717, 139.4549]; // 大和市の境界データ全体のbbox中心
-const MAP_INITIAL_ZOOM = 13;
+export interface ConfigEnv {
+	REGION_ID: string;
+	REGION_DISPLAY_NAME: string;
+	MAP_CENTER_LAT: number;
+	MAP_CENTER_LNG: number;
+	MAP_ZOOM: number;
+	HAS_CHOME_BOUNDARY: boolean;
+}
 
-// 境界GeoJSONの配置パス（地域を入れ替える際はファイルを差し替えるだけでよい）
-const BOUNDARY_GEOJSON_PATH = '/data/boundary.geojson';
+export function buildConfigResponse(env: ConfigEnv): string {
+	const boundaryPath = `/data/regions/${env.REGION_ID}/boundary.geojson`;
 
+	const chomeBoundaryBlock = env.HAS_CHOME_BOUNDARY
+		? `
 // 丁目単位の境界線（基本単位区より1段階粗いグルーピングを視覚的に示す補助レイヤー。
 // クリック等の操作対象は基本単位区レイヤーのみで、こちらは表示専用＝太め・別色で重ね描き）
-const CHOME_BOUNDARY_GEOJSON_PATH = '/data/boundary_chome.geojson';
+const CHOME_BOUNDARY_GEOJSON_PATH = '/data/regions/${env.REGION_ID}/boundary_chome.geojson';
 const CHOME_BOUNDARY_COLOR = '#1e3a8a';
 const CHOME_BOUNDARY_WEIGHT = 1.75;
+`
+		: '';
 
+	return `// 見た目・地域設定の調整値。worker/config.ts が env（wrangler.jsonc の vars）から動的生成する。
+
+// 対象地域表示名・地図初期中心座標・初期ズームレベル（地域ごとに異なる）
+const REGION_DISPLAY_NAME = ${JSON.stringify(env.REGION_DISPLAY_NAME)};
+const MAP_INITIAL_CENTER = [${env.MAP_CENTER_LAT}, ${env.MAP_CENTER_LNG}];
+const MAP_INITIAL_ZOOM = ${env.MAP_ZOOM};
+
+// 境界GeoJSONの配置パス（地域ごとに固有のパスを持つため差し替え不要）
+const BOUNDARY_GEOJSON_PATH = ${JSON.stringify(boundaryPath)};
+${chomeBoundaryBlock}
 // 未担当エリアの表示（塗りつぶしなし・境界線のみ）
 const UNASSIGNED_BOUNDARY_COLOR = '#2563eb';
 const UNASSIGNED_BOUNDARY_WEIGHT = 0.525;
@@ -55,3 +78,5 @@ const GPS_DOT_RADIUS_PX = 8;
 
 // 投票所ピン（しずく型・紺色。丁目境界と同じ色でエリア外の重要地点であることを示す）
 const POLLING_STATION_PIN_COLOR = '#1e3a8a';
+`;
+}

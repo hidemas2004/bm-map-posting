@@ -17,16 +17,20 @@
   将来の認証方式変更や `bm-map-streetad` との統合時もこのファイルの中身を差し替えるだけでよい。
   セッションはHMAC署名付きの自己完結トークンをフロント側の `sessionStorage` に保持し、
   `Authorization: Bearer` ヘッダで送信する（サーバー側にセッションストアを持たない）。
-- 境界データは `public/data/boundary.geojson`。現状は大和市3,094地域（基本単位区単位、
-  約2.0MB）のみを収録。e-Stat（令和2年国勢調査 小地域(基本単位区)境界データ）由来の正式データで、
-  `area_id` はe-Stat標準地域コード（KEY_CODE。桁数は区画により異なる）、世帯数も概算ではなく
-  国勢調査の実数。基本単位区は丁目よりさらに細かい街区相当の区画（大和市の場合1区画平均約38世帯）
-  で、同一丁目内に複数ある場合は区別用に`block`列（本システム独自の表示用連番。詳細は下記
-  「行政区域データの追加・基本単位区単位への格上げ手順」参照）を付与している。他市区町村を
-  追加する場合は同手順を参照。基本単位区単位への格上げ前は丁目単位（136地域）だったため、
-  どの丁目に属するかが見た目でも分かるよう、旧丁目境界を`public/data/boundary_chome.geojson`
-  として保持し、地図上に表示専用（太め・紺色・クリック不可）の補助レイヤーとして重ね描きしている
-  （`public/config.js`の`CHOME_BOUNDARY_*`定数、`app.js`の`loadChomeBoundary()`）。
+- 境界データは地域ごとに `public/data/regions/<地域ID>/boundary.geojson`（大和市は
+  `public/data/regions/14213-yamato/boundary.geojson`、約2.0MB・3,094地域）に恒久的に配置され、
+  地域を切り替える「差し替え」操作は発生しない（詳細は下記「複数地域の並行運用」）。e-Stat
+  （令和2年国勢調査 小地域(基本単位区)境界データ）由来の正式データで、`area_id` はe-Stat標準地域
+  コード（KEY_CODE。桁数は区画により異なる）、世帯数も概算ではなく国勢調査の実数。基本単位区は
+  丁目よりさらに細かい街区相当の区画（大和市の場合1区画平均約38世帯）で、同一丁目内に複数ある
+  場合は区別用に`block`列（本システム独自の表示用連番。詳細は下記「行政区域データの追加・
+  基本単位区単位への格上げ手順」参照）を付与している。大和市は基本単位区単位への格上げ前は
+  丁目単位（136地域）だったため、どの丁目に属するかが見た目でも分かるよう、旧丁目境界を
+  `public/data/regions/14213-yamato/boundary_chome.geojson`として保持し、地図上に表示専用
+  （太め・紺色・クリック不可）の補助レイヤーとして重ね描きしている（`worker/config.ts`が
+  `env.HAS_CHOME_BOUNDARY`が真の地域でのみ`CHOME_BOUNDARY_*`定数を`/config.js`に出力し、
+  `app.js`の`loadChomeBoundary()`が読み込む。この機能は大和市専用データの遺物であり、他地域では
+  既定で無効）。
 - 「エリア」（エリア担当の設定単位）は`areas.chome_area_id`列（`boundary_chome.geojson`の各境界
   ポリゴンが持つe-Stat KEY_CODEをそのまま転用）で識別する。区画がどの境界ポリゴンに属するかは、
   区画データと`boundary_chome.geojson`の空間結合（点-in-ポリゴン判定、`scripts/lib/geo.mjs`）で
@@ -45,30 +49,31 @@
 
 ## コマンド
 
+「無名のデフォルト環境」は存在しない設計のため、`dev`/`deploy`は**必ず`--env <地域ID>`を指定する**
+（大和市を含む全地域が`env.<地域ID>`の名前付き環境。詳細は下記「複数地域の並行運用」）。
+
 ```bash
 npm install
-npx wrangler dev      # ローカル確認。.dev.vars.example を参考に .dev.vars を作成しておく
-npx wrangler deploy   # 本番デプロイ（要 Cloudflare 認証・D1本番データベース作成）
+npx wrangler dev --env 14213-yamato      # ローカル確認。.dev.vars.example を参考に .dev.vars を作成しておく
+npx wrangler deploy --env 14213-yamato   # 本番デプロイ（要 Cloudflare 認証）
 ```
 
 ### ローカルD1の初期化
 
 ```bash
-npx wrangler d1 execute bm-posting-db --local --file=migrations/0001_init.sql
-npx wrangler d1 execute bm-posting-db --local --file=migrations/0002_areas_block_level.sql
-npx wrangler d1 execute bm-posting-db --local --file=migrations/0003_area_manager.sql
-npx wrangler d1 execute bm-posting-db --local --file=migrations/0004_chome_area_id.sql
-npx wrangler d1 execute bm-posting-db --local --file=migrations/0006_polling_stations.sql
-npx wrangler d1 execute bm-posting-db --local --file=seed/areas_yamato.sql
-npx wrangler d1 execute bm-posting-db --local --file=seed/users.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0001_init.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0002_areas_block_level.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0003_area_manager.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0004_chome_area_id.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0006_polling_stations.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=regions/14213-yamato/areas.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=seed/users.sql
 ```
 
-`seed/areas_yamato.sql`は`chome_area_id`列を含む形で生成済みのため、上記の順序（0004適用後に投入）
-であれば`migrations/0005_backfill_chome_area_id_yamato.sql`は不要（新規まっさらなDBのみを対象とする
-場合）。**既にデータが入っている既存DB**（本番等）に`chome_area_id`を反映する場合は、`seed/areas_yamato.sql`
-を再投入せず、0004適用後に`migrations/0005_backfill_chome_area_id_yamato.sql`を実行すること
-（`area_id`等は変更せず`chome_area_id`列のみを更新するUPDATE文のため、`area_manager_id`等の
-既存運用データを壊さない）。
+`regions/14213-yamato/areas.sql`は`chome_area_id`列を含む形で生成済みのため、上記の順序
+（0004適用後に投入）であれば`migrations/0005_backfill_chome_area_id_yamato.sql`は不要（新規
+まっさらなDBのみを対象とする場合。`0005`は過去に旧・無名のデフォルト環境で行った一度限りの
+バックフィルの記録として残してあるだけで、新規環境では使わない）。
 
 ## シークレット・環境変数
 
@@ -187,10 +192,10 @@ CSVダウンロードに対応している（スプレッドシートでの目�
    - `chome_area_id`（区画が属する「エリア」のID）→ 本スクリプトは基本単位区データしか
      取得しないため、暫定的に自分自身の`area_id`を設定する（1区画=1エリア扱い）。
 4. **投入**: 整形したデータを `POST /api/areas/import` へPOST（本APIの仕様は下記参照）。
-   併せて `seed/areas_<市区町村名>.sql` としてSQLも保存しておくと、DBを作り直しても
-   再現できる。
-5. **境界GeoJSONへのマージ**: 抽出したfeatureを `public/data/boundary.geojson` の
-   `features` 配列に追記する（`area_id` の重複がないことを確認）。
+   併せて `regions/<地域ID>/areas.sql` としてSQLも保存しておくと、DBを作り直しても再現できる。
+5. **境界GeoJSONの配置**: 抽出したfeatureを `public/data/regions/<地域ID>/boundary.geojson`
+   として保存する（`npm run new-region`を使う場合は下記「複数地域の並行運用」の通り自動で
+   行われるため、この手順は`scripts/lib/estat-boundary.mjs`を単体実行する場合のみ手動で行う）。
 
 **今後の課題（issue#12関連）**: 上記手順では`chome_area_id`が暫定的に自分自身の`area_id`に
 なる（1区画=1エリア扱い）ため、大和市のように「エリア」を町丁・字等単位でまとめる運用はできない。
@@ -213,11 +218,25 @@ npm run fetch-boundary-data -- --region 202704-hiratsuka --city 平塚市 --city
 
 ## 複数地域の並行運用
 
-大和市とは別に、平塚市・藤沢市など複数の市区町村を**並行して**稼働させる場合、地域ごとに
-独立したCloudflare Worker・D1データベースを持つ「[named environment]
-(https://developers.cloudflare.com/workers/wrangler/environments/)」として追加する。
-`wrangler.jsonc` のトップレベル（大和市の本番設定）は変更せず、`env.<地域ID>` ブロックとして
-追記される。ロジック（`worker/*.ts`・`public/app.js`等）は全地域で共通のまま。
+大和市を含む全ての市区町村が、独立したCloudflare Worker・D1データベースを持つ「[named
+environment](https://developers.cloudflare.com/workers/wrangler/environments/)」
+（`wrangler.jsonc`の`env.<地域ID>`ブロック）として追加される。**「無名のデフォルト環境」は
+存在しない**（`wrangler.jsonc`のトップレベルは`main`/`compatibility_date`/`assets`という
+全env共通の土台のみを持ち、`d1_databases`を持たない。`--env`無しで`wrangler dev`/
+`wrangler deploy`を実行するとDBバインディングが無く意図的に失敗する）。ロジック
+（`worker/*.ts`・`public/app.js`等）は全地域で共通のまま。
+
+**地域IDの命名規則**: 総務省「全国地方公共団体コード」5桁 + `-` + ローマ字市名（例:
+`14213-yamato`、`14206-hiratsuka`）。先頭2桁が都道府県コードのため、地域IDを文字列ソート
+すると都道府県単位でまとまる。
+
+**地域固有の値は`wrangler.jsonc`の`env.<id>.vars`として持たせ、`/config.js`は
+`worker/config.ts`の`buildConfigResponse()`が`env`から動的生成する**（表示名・地図初期座標・
+ズーム・チョーム境界レイヤーの有無）。色・しきい値等の見た目パラメータは全地域共通として
+`worker/config.ts`に一本化してある。境界GeoJSONも`public/data/regions/<地域ID>/boundary.geojson`
+という地域ごとに固有のパスに恒久的に配置され、`public/config.js`のような「地域を切り替えたら
+上書きする」可変ファイルは存在しない（誤って`git add -A`しても別地域の内容が混入する事故が
+構造的に起こらない）。
 
 ### 対話スクリプトで新しい地域を追加する
 
@@ -229,29 +248,34 @@ npm run new-region
 対話形式で以下を順に行う（`Ctrl+C`で中断しても、地域IDを指定して再実行すれば完了済みの
 ステップはスキップして続きから再開できる）:
 
-1. 地域ID（例: `202704-hiratsuka`）・表示名・e-StatのCITY_NAME・5桁市区町村コードを入力
-2. 境界データ・地域マスタの収集（e-Statから自動取得 or 手動で`regions/<id>/`に用意）
-3. 境界データのbboxから地図初期座標を自動算出（上書き可）・`regions/<id>/config.js`を生成
-4. 初期管理者ユーザーを1名だけ登録（以降の担当者追加はデプロイ後に`/users.html`のCSV
+1. 地域ID（例: `14213-yamato`）・表示名・e-StatのCITY_NAME・5桁市区町村コードを入力
+2. 境界データ・地域マスタの収集（e-Statから自動取得 or 手動で`regions/<id>/`に用意）し、
+   `public/data/regions/<id>/boundary.geojson`へ恒久的に配置
+3. 境界データのbboxから地図初期座標を自動算出（上書き可）
+4. 丁目単位の境界線（チョーム境界）レイヤーをこの地域でも使うか確認（既定は無効。大和市専用
+   データの遺物であり、他地域での取得手順は未整備。有効にする場合は
+   `public/data/regions/<id>/boundary_chome.geojson`を別途用意する）
+5. 初期管理者ユーザーを1名だけ登録（以降の担当者追加はデプロイ後に`/users.html`のCSV
    インポートで行う）
-5. D1データベースを新規作成し、`wrangler.jsonc`に`env.<id>`ブロックを追記
-6. マイグレーション・地域マスタ・管理者ユーザーを新D1へ投入
-7. `SESSION_SECRET`・`AREAS_IMPORT_TOKEN`を自動生成し`wrangler secret put`で設定
+6. D1データベースを新規作成し、`wrangler.jsonc`に`env.<id>`ブロック（`vars`込み）を追記
+7. マイグレーション・地域マスタ・管理者ユーザーを新D1へ投入
+8. `SESSION_SECRET`・`AREAS_IMPORT_TOKEN`を自動生成し`wrangler secret put`で設定
    （値は画面に表示されない）
-8. **ここまでの入力内容を一覧表示し、「この内容でデプロイしてよいか」を確認**
-9. 確認後、`public/config.js`・`public/data/boundary.geojson`を該当地域の内容に切り替えて
-   `wrangler deploy --env <id>`を実行
+9. **ここまでの入力内容を一覧表示し、「この内容でデプロイしてよいか」を確認**
+10. 確認後`wrangler deploy --env <id>`を実行。`regions/<id>/polling_stations.csv`が
+    用意されていれば、デプロイ直後に新規管理者アカウントでログインして
+    `POST /api/polling-stations/import`へ自動投入する（測地系自動補正込みの既存ロジックを
+    そのまま再利用するため、Node側でCSVを直接SQL化することはしない）。ファイルが無ければ
+    投票所データは空のまま（初期値）で、後から`/polling-stations.html`で追加できる。
 
-- 各地域の設定は `regions/<地域ID>/`（`meta.json`・`config.js`・`boundary.geojson`・
-  `areas.sql`）にまとめて保存される。**合言葉などの秘密情報はここには保存されない**
-  （OS一時ディレクトリ経由でD1に投入後、即削除する設計）。
-- デプロイ後、ローカルの`public/`には直前にデプロイした地域の内容が残る（`npm run dev`で
-  ローカル確認する際はどの地域を見ているか注意。別地域を扱う際は改めてこのスクリプトを
-  実行すれば自動的に切り替わる）。
+- 各地域の設定は `regions/<地域ID>/`（`meta.json`・`areas.sql`・任意で`polling_stations.csv`）
+  にまとめて保存される。境界GeoJSONは`public/data/regions/<地域ID>/`配下。**合言葉などの秘密情報は
+  どちらにも保存されない**（OS一時ディレクトリ経由でD1に投入・ログイン確認後、即メモリから
+  破棄する設計）。
 - スクリプト本体は `scripts/new-region.mjs`（オーケストレーション）、
   `scripts/lib/estat-boundary.mjs`（境界データ取得・整形）、
   `scripts/lib/wrangler-jsonc.mjs`（`wrangler.jsonc`への安全な追記）、
-  `scripts/lib/config-template.mjs`（`config.js`生成・bbox中心計算）に分かれている。
+  `scripts/lib/geojson-bbox.mjs`（bbox中心計算）に分かれている。
 - e-Statの自動取得には`www.e-stat.go.jp`へのネットワーク到達性が必要。到達できない環境
   （一部のサンドボックス等）では対話中に「手動で用意してください」と案内されるので、
   上記「行政区域データの追加・基本単位区単位への格上げ手順」に沿って別環境で用意したファイルを
@@ -265,9 +289,9 @@ npm run new-region
   単体テスト済みだが、初めて新しい地域を追加する際は各ステップの出力（特に`wrangler d1 create`
   の`database_id`抽出）を確認しながら進めること。想定外のwrangler出力形式で`database_id`の
   自動抽出に失敗した場合は、出力を貼り付けて手動入力できるようにしてある。
-- **対象地域は大和市のみ**: 横浜市の区単位プレースホルダデータは削除済み（世帯数が概算で
-  正式なものではなかったため）。他市区町村を追加する場合は上記「行政区域データの追加・
-  基本単位区単位への格上げ手順」に沿って、大和市と同様にe-Stat由来の基本単位区単位の
+- **現時点の対象地域は大和市のみ**（`env.14213-yamato`）: 横浜市の区単位プレースホルダデータは
+  削除済み（世帯数が概算で正式なものではなかったため）。他市区町村を追加する場合は上記
+  「複数地域の並行運用」の`npm run new-region`で、大和市と同様にe-Stat由来の基本単位区単位の
   正式データとして追加する。
 - **世帯数0の地域がある**: 大和市3,094地域のうち172地域（例: `142130001301` 下鶴間一丁目1区画、
   `1421320031` 福田。商業地・工業地等と思われる）は世帯数が0。基本単位区は丁目よりさらに
@@ -282,26 +306,26 @@ npm run new-region
 - 境界GeoJSON（大和市3,094地域で約2.0MB。丁目単位〈136地域・約350KB〉から件数・サイズとも
   大幅に増加）は簡易な地図表示には十分だが、対象自治体を増やすとデータ量が線形に増えるため、
   必要に応じてmapshaperの`-simplify`等での簡略化を検討する。
-- **本番の合言葉が初期シードのまま**: 2026-08-05時点、本番D1には`seed/users.sql`のテスト用
-  合言葉（`admin-pass`等）がそのまま入っている。ユーザー管理画面（`/users.html`、管理者限定）
-  から早めに変更すること。
-
 ## 本番環境
 
-- URL: `https://bm-map-posting.blackdog-yokohama-japan.workers.dev`（2026-08-05にデプロイ済み）
-- D1データベース: `bm-posting-db`（`wrangler.jsonc`の`database_id`参照）
-- `SESSION_SECRET` / `AREAS_IMPORT_TOKEN` は`wrangler secret put`で設定済み
-  （値はCloudflareダッシュボード側でのみ保持。再発行する場合は`POST /api/areas/import`を
-  使う外部スクリプト側の設定も合わせて更新すること）
+各地域のデプロイ情報（Worker名・D1データベース名・URL）は`wrangler.jsonc`の`env.<地域ID>`
+ブロックを参照。大和市は`env.14213-yamato`（Worker名`bm-map-posting-14213-yamato`、D1名
+`bm-posting-db-14213-yamato`）。旧・無名のデフォルト環境（Worker`bm-map-posting`、D1
+`bm-posting-db`）はこのリファクタリングに伴い廃止し、`npm run new-region`（地域ID:
+`14213-yamato`）による再プロビジョニングに置き換えた（既存データはテスト運用段階だったため
+引き継がず、管理者ユーザーも新規作成。詳細は上記「複数地域の並行運用」）。
+`SESSION_SECRET` / `AREAS_IMPORT_TOKEN`は地域ごとに`wrangler secret put --env <id>`で
+個別設定される（値はCloudflareダッシュボード側でのみ保持。再発行する場合は
+`POST /api/areas/import`を使う外部スクリプト側の設定も合わせて更新すること）。
 
 ### 再デプロイ・DB更新の手順
 
 ```bash
-npx wrangler d1 execute bm-posting-db --remote --file=<マイグレーション/シードファイル>
-npx wrangler deploy
+npx wrangler d1 execute bm-posting-db-<地域ID> --env <地域ID> --remote --file=<マイグレーション/シードファイル>
+npx wrangler deploy --env <地域ID>
 ```
 
-### 基本単位区への切替え（2026-08、参考: 同様の全面データ入れ替えを再度行う場合の手順）
+### 基本単位区への切替え（2026-08、旧・無名のデフォルト環境で実施した過去の記録）
 
 丁目単位から基本単位区単位への格上げは境界データの`area_id`が全面的に入れ替わるため、
 既存の`terms`/`term_data`/`activity_log`（当時は全てダミーデータだったため実施）を
@@ -324,7 +348,7 @@ npx wrangler deploy   # public/data/boundary.geojson を新データに合わせ
 コードデプロイとDB入れ替え（手順2・3）は同時に行うこと（`boundary.geojson`とD1の`areas`が
 食い違う時間帯を作らないため）。`--local`環境で一連の手順をリハーサルしてから本番に適用する。
 
-### chome_area_id列の追加・バックフィル（issue#12対応、2026-08）
+### chome_area_id列の追加・バックフィル（issue#12対応、2026-08、旧・無名のデフォルト環境で実施した過去の記録）
 
 `areas.chome_area_id`列の追加は、`area_id`自体を変更しない列追加＋既存行のUPDATEのみのため、
 上記「基本単位区への切替え」のような全データ削除は不要。
@@ -351,7 +375,7 @@ npx wrangler deploy
 実態としては分割後の複数エリアに同じ担当が入ったままになる）。管理者が該当5町のエリア担当設定を
 目視確認し、必要に応じて個別に設定し直すこと。
 
-### polling_stationsテーブルの追加（issue#13対応、2026-08）
+### polling_stationsテーブルの追加（issue#13対応、2026-08、旧・無名のデフォルト環境で実施した過去の記録）
 
 新規テーブルの追加のみ（既存テーブルへの変更・データ移行なし）のため、`chome_area_id`列の
 追加時のような順序制約はない。
@@ -361,17 +385,9 @@ npx wrangler d1 execute bm-posting-db --remote --file=migrations/0006_polling_st
 npx wrangler deploy
 ```
 
-### 初回構築時の手順（参考。再構築が必要になった場合用）
+### 新規環境の初回構築手順
 
-1. `npx wrangler login` でCloudflareアカウントに認証する
-2. `npx wrangler d1 create bm-posting-db` で本番D1データベースを作成し、`wrangler.jsonc` の
-   `database_id` を実際のIDに置き換える
-3. 本番D1へマイグレーション・シードを適用する
-   （`npx wrangler d1 execute bm-posting-db --remote --file=migrations/0001_init.sql`、
-   `migrations/0002_areas_block_level.sql`、`migrations/0003_area_manager.sql`、
-   `migrations/0004_chome_area_id.sql`、`migrations/0006_polling_stations.sql`、
-   `seed/areas_yamato.sql`、`seed/users.sql` の順に`--remote` フラグを付けて適用。
-   `seed/areas_yamato.sql`は`chome_area_id`列を含む形で生成済みのため`migrations/0005_...`は不要）
-4. `wrangler secret put SESSION_SECRET` / `wrangler secret put AREAS_IMPORT_TOKEN` を設定する
-5. `npx wrangler deploy` で本番デプロイする
-6. ユーザー管理画面（`/users.html`）から`seed/users.sql`のテスト用合言葉を変更する
+新規地域（大和市の再構築を含む）の初回構築は、上記「複数地域の並行運用」の
+`npm run new-region`が一気通貫で行う（D1作成・マイグレーション適用・地域マスタ投入・
+管理者ユーザー作成・Secrets設定・デプロイ・任意で投票所データ投入）。手動でのコマンド列挙は
+不要になったため、個別手順はスクリプトの対話プロンプトを参照。

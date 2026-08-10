@@ -8,14 +8,10 @@
     "binding": "ASSETS",
     "run_worker_first": true
   },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "bm-posting-db",
-      // ローカル開発（--local）はこのIDに関わらずSQLiteエミュレーションで動作する。
-      "database_id": "d51f8de3-af32-44c2-87ea-a3d28e30bb30"
-    }
-  ],
+  // トップレベルは全env共通の土台（main/compatibility_date/assets）のみを持つ。
+  // d1_databasesを含む実際のデプロイ対象は必ず env.<地域ID> として追加する
+  // （`wrangler dev`/`wrangler deploy` を --env 無しで実行すると DB バインディングが無く
+  // 意図的に失敗する。「無名のデフォルト環境」は存在しない設計。詳細はREADME「複数地域の並行運用」）。
   "env": {
     "staging": {
       "name": "bm-map-posting-staging",
@@ -25,9 +21,33 @@
           "database_name": "bm-posting-db-staging",
           "database_id": "972ced08-252f-46f2-b143-040ada84c6b0"
         }
-      ]
+      ],
+      "vars": {
+        "REGION_ID": "14213-yamato",
+        "REGION_DISPLAY_NAME": "大和市",
+        "MAP_CENTER_LAT": 35.4717,
+        "MAP_CENTER_LNG": 139.4549,
+        "MAP_ZOOM": 13,
+        "HAS_CHOME_BOUNDARY": true
+      }
+    },
+    "14213-yamato": {
+      "name": "bm-map-posting-14213-yamato",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bm-posting-db-14213-yamato",
+          "database_id": "33663a66-7b1e-4bf4-952d-d77c2b8ab852"
+        }
+      ],
+      "vars": {
+        "REGION_ID": "14213-yamato",
+        "REGION_DISPLAY_NAME": "大和市",
+        "MAP_CENTER_LAT": 35.4717,
+        "MAP_CENTER_LNG": 139.4549,
+        "MAP_ZOOM": 13,
+        "HAS_CHOME_BOUNDARY": true
+      }
     }
   }
-  // 対象地域表示名・地図初期中心座標・初期ズームレベル等の環境変数、
-  // e-Stat関連のSecretsは後続フェーズで追加する。
 }
