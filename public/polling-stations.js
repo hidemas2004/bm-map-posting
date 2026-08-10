@@ -67,25 +67,22 @@ function addWarningItem(listEl, text) {
 	listEl.appendChild(li);
 }
 
-document.getElementById('import-button').addEventListener('click', async () => {
+let lastImportText = null;
+
+async function runImport(text, { force } = {}) {
 	const fileInput = document.getElementById('import-file');
 	const errorEl = document.getElementById('import-error');
 	const successEl = document.getElementById('import-success');
 	const noteEl = document.getElementById('import-note');
 	const warningsEl = document.getElementById('import-warnings');
+	const forceButton = document.getElementById('force-import-button');
 	errorEl.textContent = '';
 	successEl.textContent = '';
 	noteEl.textContent = '';
 	warningsEl.innerHTML = '';
+	forceButton.hidden = true;
 
-	const file = fileInput.files[0];
-	if (!file) {
-		errorEl.textContent = 'CSVファイルを選択してください';
-		return;
-	}
-
-	const text = await file.text();
-	const res = await apiFetch('/api/polling-stations/import', {
+	const res = await apiFetch(`/api/polling-stations/import${force ? '?force=true' : ''}`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'text/csv' },
 		body: text,
@@ -98,11 +95,18 @@ document.getElementById('import-button').addEventListener('click', async () => {
 			const label = DATUM_BUCKET_LABELS[r.bucket] ?? r.bucket;
 			addWarningItem(warningsEl, `${r.line}行目: ${label}`);
 		}
+		if (data.datum_check) {
+			lastImportText = text;
+			forceButton.hidden = false;
+		}
 		return;
 	}
 	successEl.textContent = `${data.imported}件の投票所を反映しました`;
 	if (data.datum_corrected) {
 		successEl.textContent += ` / 日本測地系の座標を自動補正しました（${data.corrected_count}件）`;
+	}
+	if (data.datum_check_forced) {
+		successEl.textContent += ' / 測地系チェックの警告を確認の上、強制インポートしました';
 	}
 	if (data.datum_check_note) {
 		noteEl.textContent = data.datum_check_note;
@@ -110,8 +114,35 @@ document.getElementById('import-button').addEventListener('click', async () => {
 	for (const w of data.warnings ?? []) {
 		addWarningItem(warningsEl, w.message);
 	}
+	for (const r of data.datum_check?.rows ?? []) {
+		if (r.bucket === 'ok') continue;
+		const label = DATUM_BUCKET_LABELS[r.bucket] ?? r.bucket;
+		addWarningItem(warningsEl, `${r.line}行目: ${label}`);
+	}
 	fileInput.value = '';
+	lastImportText = null;
 	await loadStations();
+}
+
+document.getElementById('import-button').addEventListener('click', async () => {
+	const fileInput = document.getElementById('import-file');
+	const errorEl = document.getElementById('import-error');
+	const file = fileInput.files[0];
+	if (!file) {
+		errorEl.textContent = 'CSVファイルを選択してください';
+		return;
+	}
+	const text = await file.text();
+	await runImport(text);
+});
+
+document.getElementById('force-import-button').addEventListener('click', async () => {
+	if (!lastImportText) return;
+	const ok = confirm(
+		'住所と座標の整合性が確認できない行があります。内容を確認した上で、CSVの座標をそのままインポートしますか？',
+	);
+	if (!ok) return;
+	await runImport(lastImportText, { force: true });
 });
 
 loadStations();

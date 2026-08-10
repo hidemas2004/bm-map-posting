@@ -26,7 +26,17 @@ export async function listPollingStations(env: PollingStationsEnv): Promise<Resp
  * 投票所には area_id/user_id のような自然キーがCSV側に無い前提のため、アップサートではなく
  * アップロードのたびに全件洗い替え（DELETE→INSERT）する。
  */
+function datumCheckPayload(datumCheck: DatumRowResult[]) {
+	return datumCheck.map((r) => ({
+		line: r.line,
+		bucket: r.bucket,
+		dist_raw_m: r.distRawM,
+		dist_conv_m: r.distConvM,
+	}));
+}
+
 export async function importPollingStations(request: Request, env: PollingStationsEnv): Promise<Response> {
+	const force = new URL(request.url).searchParams.get('force') === 'true';
 	const text = stripBom(await request.text());
 
 	const rows = parseCsv(text);
@@ -76,21 +86,16 @@ export async function importPollingStations(request: Request, env: PollingStatio
 	// 日本測地系とみなせる場合は全行を世界測地系に補正してからインポートする。
 	const datumCheck = await checkAndCorrectDatum(stations);
 
-	if (datumCheck.verdict === 'abort') {
+	if (datumCheck.verdict === 'abort' && !force) {
 		return Response.json(
 			{
-				error: '住所と座標の整合性が確認できないため、インポートを中断しました。行ごとの判定結果を確認してください。',
+				error: '住所と座標の整合性が確認できないため、インポートを中断しました。行ごとの判定結果を確認の上、必要であれば強制インポートしてください。',
 				datum_check: {
 					ok_count: datumCheck.okCount,
 					candidate_count: datumCheck.candidateCount,
 					unresolved_count: datumCheck.unresolvedCount,
 					no_address_count: datumCheck.noAddressCount,
-					rows: datumCheck.rows.map((r: DatumRowResult) => ({
-						line: r.line,
-						bucket: r.bucket,
-						dist_raw_m: r.distRawM,
-						dist_conv_m: r.distConvM,
-					})),
+					rows: datumCheckPayload(datumCheck.rows),
 				},
 			},
 			{ status: 400 },
@@ -118,11 +123,22 @@ export async function importPollingStations(request: Request, env: PollingStatio
 	];
 	await env.DB.batch(statements);
 
+	const forced = datumCheck.verdict === 'abort' && force;
 	return Response.json({
 		imported: finalStations.length,
 		datum_corrected: datumCheck.verdict === 'correct_all',
 		corrected_count: datumCheck.correctedCount,
 		datum_check_note: datumCheck.note,
 		warnings: datumCheck.warnings,
+		datum_check_forced: forced,
+		datum_check: forced
+			? {
+					ok_count: datumCheck.okCount,
+					candidate_count: datumCheck.candidateCount,
+					unresolved_count: datumCheck.unresolvedCount,
+					no_address_count: datumCheck.noAddressCount,
+					rows: datumCheckPayload(datumCheck.rows),
+				}
+			: undefined,
 	});
 }
