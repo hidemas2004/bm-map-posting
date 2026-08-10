@@ -127,8 +127,8 @@ function styleForArea(areaId) {
 		};
 	}
 
-	// エリア担当が未設定の区画は予定配布エリア外。フィルタ状態に関わらず常にグレー固定。
-	if (!row.area_manager_id) {
+	// エリア担当・区画担当がともに未設定の区画は予定配布エリア外。フィルタ状態に関わらず常にグレー固定。
+	if (!row.area_manager_id && !row.assignee_id) {
 		return {
 			color: UNASSIGNED_BOUNDARY_COLOR,
 			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
@@ -182,7 +182,7 @@ function updateHeaderStats() {
 
 	for (const row of state.termDataByAreaId.values()) {
 		if (!matchesAssigneeFilter(row, state.assigneeFilter)) continue;
-		if (!row.area_manager_id) continue; // 予定配布エリア(エリア担当設定済み)のみ集計
+		if (!row.area_manager_id && !row.assignee_id) continue; // 予定配布エリア(エリア担当or区画担当が設定済み)のみ集計
 		plannedHouseholds += row.num_households;
 		distributed += row.distributed_total;
 	}
@@ -318,9 +318,10 @@ function buildPopupContent(row, layer) {
 	L.DomEvent.disableClickPropagation(container);
 
 	const isZeroHousehold = row.num_households === 0;
-	const isNonTarget = !row.area_manager_id;
+	const isNonTarget = !row.area_manager_id && !row.assignee_id;
 	const canEditAreaManager = !state.viewOnly && !isZeroHousehold;
-	const canEditAssignee = !state.viewOnly && !isZeroHousehold && !isNonTarget;
+	const canEditAssignee = !state.viewOnly && !isZeroHousehold;
+	const canRecordDistribution = !state.viewOnly && !isZeroHousehold && !isNonTarget;
 
 	const areaHouseholds = areaHouseholdsFor(row);
 	const areaDistributed = areaDistributedFor(row);
@@ -336,7 +337,7 @@ function buildPopupContent(row, layer) {
 			<span>エリア担当: ${row.area_manager_name || '未設定'}</span>
 			${canEditAreaManager ? '<button type="button" data-action="edit-area-manager">変更する</button>' : ''}
 		</div>
-		${!isZeroHousehold && isNonTarget ? '<p class="zero-household-note">エリア担当が未設定のため、担当者設定・配布記録の対象外です。</p>' : ''}
+		${!isZeroHousehold && isNonTarget ? '<p class="zero-household-note">エリア担当・区画担当が未設定のため、配布記録の対象外です。区画担当の設定は可能です。</p>' : ''}
 		<div class="assignee-row">
 			<span>区画担当: ${row.assignee_name || '未担当'}</span>
 			${canEditAssignee ? '<button type="button" data-action="edit-assignee">変更する</button>' : ''}
@@ -351,7 +352,7 @@ function buildPopupContent(row, layer) {
 		<div class="row"><span>最終更新:</span><span>${row.last_updated_at ? new Date(row.last_updated_at).toLocaleString('ja-JP') : '未記録'}</span></div>
 	`;
 
-	if (canEditAssignee) {
+	if (canRecordDistribution) {
 		const form = document.createElement('div');
 		form.className = 'record-form';
 		form.innerHTML = `
@@ -390,7 +391,9 @@ function buildPopupContent(row, layer) {
 			layer.setPopupContent(buildPopupContent(data, layer));
 			layer.getPopup().update();
 		});
+	}
 
+	if (canEditAssignee) {
 		const editButton = container.querySelector('[data-action="edit-assignee"]');
 		editButton.addEventListener('click', () => {
 			layer.setPopupContent(buildAssigneeEditContent(row, layer));

@@ -92,7 +92,7 @@ export async function exportAreasCsv(env: AreasEnv): Promise<Response> {
 		area.chome_area_id,
 		area.block,
 		area.num_households,
-		area.area_manager_id ? 1 : 0,
+		area.area_manager_id || area.assignee_name ? 1 : 0,
 		area.area_manager_name,
 		area.assignee_name,
 		area.distributed_total,

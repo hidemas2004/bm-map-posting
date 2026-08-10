@@ -28,12 +28,18 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	}
 
 	const row = await env.DB.prepare(
-		`SELECT term_data.id, term_data.distributed_total, areas.num_households, areas.area_manager_id
+		`SELECT term_data.id, term_data.distributed_total, term_data.assignee_id, areas.num_households, areas.area_manager_id
 		 FROM term_data JOIN areas ON areas.area_id = term_data.area_id
 		 WHERE term_data.term_id = ? AND term_data.area_id = ?`,
 	)
 		.bind(termId, areaId)
-		.first<{ id: number; distributed_total: number; num_households: number; area_manager_id: string | null }>();
+		.first<{
+			id: number;
+			distributed_total: number;
+			assignee_id: string | null;
+			num_households: number;
+			area_manager_id: string | null;
+		}>();
 
 	if (!row) {
 		return Response.json({ error: '指定されたターム・エリアの組み合わせが見つかりません' }, { status: 404 });
@@ -41,8 +47,8 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	if (row.num_households === 0) {
 		return Response.json({ error: '世帯数が0のためこのエリアは配布記録の対象外です' }, { status: 400 });
 	}
-	if (!row.area_manager_id) {
-		return Response.json({ error: 'エリア担当が未設定のためこのエリアは配布記録の対象外です' }, { status: 400 });
+	if (!row.area_manager_id && !row.assignee_id) {
+		return Response.json({ error: 'エリア担当・区画担当のいずれも未設定のためこのエリアは配布記録の対象外です' }, { status: 400 });
 	}
 
 	const newTotal = row.distributed_total + delta;
@@ -94,17 +100,14 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 		return Response.json({ error: 'term_id, area_id を指定してください' }, { status: 400 });
 	}
 
-	const area = await env.DB.prepare('SELECT num_households, area_manager_id FROM areas WHERE area_id = ?')
+	const area = await env.DB.prepare('SELECT num_households FROM areas WHERE area_id = ?')
 		.bind(areaId)
-		.first<{ num_households: number; area_manager_id: string | null }>();
+		.first<{ num_households: number }>();
 	if (!area) {
 		return Response.json({ error: '指定されたエリアが見つかりません' }, { status: 404 });
 	}
 	if (area.num_households === 0) {
 		return Response.json({ error: '世帯数が0のためこのエリアには担当者を設定できません' }, { status: 400 });
-	}
-	if (!area.area_manager_id) {
-		return Response.json({ error: 'エリア担当が未設定のためこのエリアには担当者を設定できません' }, { status: 400 });
 	}
 
 	let assigneeName = '';
