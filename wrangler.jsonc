@@ -48,6 +48,24 @@
         "MAP_ZOOM": 13,
         "HAS_CHOME_BOUNDARY": true
       }
+    },
+    "14206-odawara": {
+      "name": "bm-map-posting-14206-odawara",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bm-posting-db-14206-odawara",
+          "database_id": "99601ab9-bf43-4b04-9703-61e9a08d3e08"
+        }
+      ],
+      "vars": {
+        "REGION_ID": "14206-odawara",
+        "REGION_DISPLAY_NAME": "小田原市",
+        "MAP_CENTER_LAT": 35.254,
+        "MAP_CENTER_LNG": 139.1489,
+        "MAP_ZOOM": 13,
+        "HAS_CHOME_BOUNDARY": true
+      }
     }
   }
 }

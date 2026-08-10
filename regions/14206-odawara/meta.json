@@ -1,0 +1,16 @@
+{
+  "displayName": "小田原市",
+  "cityName": "小田原市",
+  "cityCode": "14206",
+  "mapCenter": [
+    35.254,
+    139.1489
+  ],
+  "mapZoom": 13,
+  "hasChomeBoundary": true,
+  "adminUserId": "hidemas",
+  "adminName": "hidemas@admin",
+  "databaseId": "99601ab9-bf43-4b04-9703-61e9a08d3e08",
+  "dbSeeded": true,
+  "secretsSet": true
+}
