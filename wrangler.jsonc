@@ -66,6 +66,24 @@
         "MAP_ZOOM": 13,
         "HAS_CHOME_BOUNDARY": true
       }
+    },
+    "14203-hiratsuka": {
+      "name": "bm-map-posting-14203-hiratsuka",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bm-posting-db-14203-hiratsuka",
+          "database_id": "c08e0625-f148-4455-ae70-0e519505ecb0"
+        }
+      ],
+      "vars": {
+        "REGION_ID": "14203-hiratsuka",
+        "REGION_DISPLAY_NAME": "平塚市",
+        "MAP_CENTER_LAT": 35.3579,
+        "MAP_CENTER_LNG": 139.307,
+        "MAP_ZOOM": 13,
+        "HAS_CHOME_BOUNDARY": true
+      }
     }
   }
 }

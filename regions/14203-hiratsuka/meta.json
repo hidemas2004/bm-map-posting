@@ -1,0 +1,16 @@
+{
+  "displayName": "平塚市",
+  "cityName": "平塚市",
+  "cityCode": "14203",
+  "mapCenter": [
+    35.3579,
+    139.307
+  ],
+  "mapZoom": 13,
+  "hasChomeBoundary": true,
+  "adminUserId": "admin",
+  "adminName": "hidemas@admin",
+  "databaseId": "c08e0625-f148-4455-ae70-0e519505ecb0",
+  "dbSeeded": true,
+  "secretsSet": true
+}

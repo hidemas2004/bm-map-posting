@@ -22,6 +22,7 @@ import { fetchCityBoundary, fetchChomeBoundary, buildChomeAreaIdUpdateSql } from
 import { assignChomeAreaIds } from './lib/geo.mjs';
 import { computeCenterFromGeoJson } from './lib/geojson-bbox.mjs';
 import { execCommand } from './lib/win-exec.mjs';
+import { ensureWranglerAuth } from './lib/wrangler-auth.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC_DIR = path.join(REPO_ROOT, 'public');
@@ -58,6 +59,10 @@ function extractDeployedUrl(wranglerOutput) {
 
 async function main() {
 	console.log('=== bm-map-posting: 新規地域の並行ローンチ ===\n');
+
+	// D1作成・デプロイ等の前に認証状態を確認・リフレッシュしておく（未認証やアクセストークン
+	// 期限切れのまま境界データ収集等の対話を終えた後にwrangler呼び出しで落ちるのを防ぐ）。
+	await ensureWranglerAuth();
 
 	let regionId = await ask('地域ID（例: 14213-yamato。市区町村コード5桁+ローマ字市名を推奨。英数字とハイフンのみ）');
 	regionId = regionId.trim().toLowerCase();
