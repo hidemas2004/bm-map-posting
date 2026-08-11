@@ -6,6 +6,16 @@ import { recordDistribution, setAreaManager, setAssignee, type RecordsEnv } from
 import { exportActivityLogCsv, listActivityLog, type ActivityLogEnv } from './activity_log';
 import { deleteTerm, type ResetEnv } from './reset';
 import { importPollingStations, listPollingStations, type PollingStationsEnv } from './polling_stations';
+import {
+	createComment,
+	deleteComment,
+	deleteCommentImage,
+	getCommentImage,
+	listComments,
+	updateComment,
+	uploadCommentImage,
+	type CommentsEnv,
+} from './comments';
 import { buildConfigResponse, type ConfigEnv } from './config';
 
 export interface Env
@@ -17,6 +27,7 @@ export interface Env
 		ActivityLogEnv,
 		ResetEnv,
 		PollingStationsEnv,
+		CommentsEnv,
 		ConfigEnv {
 	ASSETS: { fetch(request: Request): Promise<Response> };
 }
@@ -114,6 +125,31 @@ export default {
 					return Response.json({ error: '管理者権限が必要です' }, { status: 403 });
 				}
 				return importPollingStations(request, env);
+			}
+			// 地図コメント機能（issue#24）。/api/comments/:id, /api/comments/:id/image のみ
+			// パスパラメータが必要なため、この router で唯一正規表現マッチを使う。
+			const commentIdMatch = url.pathname.match(/^\/api\/comments\/(\d+)$/);
+			const commentImageMatch = url.pathname.match(/^\/api\/comments\/(\d+)\/image$/);
+			if (url.pathname === '/api/comments' && request.method === 'GET') {
+				return listComments(env);
+			}
+			if (url.pathname === '/api/comments' && request.method === 'POST') {
+				return createComment(request, env, user);
+			}
+			if (commentIdMatch && request.method === 'PUT') {
+				return updateComment(request, env, user, commentIdMatch[1]);
+			}
+			if (commentIdMatch && request.method === 'DELETE') {
+				return deleteComment(env, commentIdMatch[1]);
+			}
+			if (commentImageMatch && request.method === 'GET') {
+				return getCommentImage(env, commentImageMatch[1]);
+			}
+			if (commentImageMatch && request.method === 'POST') {
+				return uploadCommentImage(request, env, user, commentImageMatch[1]);
+			}
+			if (commentImageMatch && request.method === 'DELETE') {
+				return deleteCommentImage(env, user, commentImageMatch[1]);
 			}
 			if (url.pathname === '/api/record' && request.method === 'POST') {
 				return recordDistribution(request, env, user);

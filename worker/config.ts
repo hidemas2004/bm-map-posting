@@ -1,3 +1,5 @@
+import { COMMENT_CATEGORIES, COMMENT_OTHER_PIN_COLORS } from './comments';
+
 /**
  * /config.js を地域ごとの env（wrangler.jsonc の vars）から動的生成する。
  * 地域固有の値（表示名・地図初期座標・境界データパス）のみ env から埋め込み、
@@ -78,5 +80,10 @@ const GPS_DOT_RADIUS_PX = 8;
 
 // 投票所ピン（しずく型・紺色。丁目境界と同じ色でエリア外の重要地点であることを示す）
 const POLLING_STATION_PIN_COLOR = '#1e3a8a';
+
+// 地図コメント機能（issue#24）。カテゴリ定義・「その他」選択時に選べるピン色。
+// worker/comments.ts のバリデーション値と一致させるため、そちらから import してそのまま埋め込む。
+const COMMENT_CATEGORIES = ${JSON.stringify(COMMENT_CATEGORIES)};
+const COMMENT_OTHER_PIN_COLORS = ${JSON.stringify(COMMENT_OTHER_PIN_COLORS)};
 `;
 }

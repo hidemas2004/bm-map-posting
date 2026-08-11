@@ -66,6 +66,7 @@ npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0003_area_manager.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0004_chome_area_id.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0006_polling_stations.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0007_comments.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=regions/14213-yamato/areas.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=seed/users.sql
 ```
@@ -148,6 +149,28 @@ CSVダウンロードに対応している（スプレッドシートでの目�
   - 想定運用: CSVダウンロード→表計算ソフトで編集（変更する合言葉のセルだけ入力）→アップロード
 - 上記3つとも`requireAdmin`（管理者ロールのセッション）必須。`POST /api/areas/import`とは異なり
   外部スクリプト向けの専用トークンではなく、ブラウザからの管理者操作を想定した設計。
+
+## 地図コメント機能（issue#24、R2バケットが必要）
+
+地図上の任意地点にコメント（ポスト禁止・ポスター候補・その他、任意で画像添付）を記録できる。
+term/areaに紐付かない独立データ（`comments`テーブル、投票所と同じ思想）で、全ターム共通で
+表示・編集される。API本体は`worker/comments.ts`、`GET/POST /api/comments`・
+`PUT/DELETE /api/comments/:id`・`GET/POST/DELETE /api/comments/:id/image`。
+編集・削除に管理者権限は不要（`requireAuth`のみ。担当者設定と同じ運用方針）。
+
+画像は`COMMENT_IMAGES`という名前のR2バケットバインディングに保存する（`wrangler.jsonc`の
+各env）。**ローカル開発（`wrangler dev --local`）ではwranglerがR2をエミュレートするため
+事前作成は不要**だが、本番デプロイ前には地域ごとに実バケットを一度だけ作成する必要がある。
+
+```bash
+npx wrangler r2 bucket create bm-posting-comment-images-14213-yamato
+npx wrangler r2 bucket create bm-posting-comment-images-14206-odawara
+npx wrangler r2 bucket create bm-posting-comment-images-14203-hiratsuka
+```
+
+新規地域を`npm run new-region`で追加する場合も、上記と同じ命名規則
+（`bm-posting-comment-images-<地域ID>`）でバケットを手動作成し、`wrangler.jsonc`の
+該当envに`r2_buckets`ブロックを追記すること（`npm run new-region`自体はR2作成を自動化していない）。
 
 ## 行政区域データの追加・基本単位区単位への格上げ手順
 

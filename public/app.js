@@ -17,7 +17,13 @@ const state = {
 	watchId: null,
 	gpsMarker: null,
 	assigneeFilter: '', // ''=全体表示、それ以外はuser_id
+	comments: new Map(), // comment_id -> comment（issue#24。全ターム共通データなのでterm切替の影響を受けない）
+	commentFilter: 'none', // 'none'=表示しない/'all'=全て表示/カテゴリ値
 };
+
+function escapeHtml(str) {
+	return String(str).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+}
 
 async function apiFetch(path, options = {}) {
 	const res = await fetch(path, {
@@ -76,6 +82,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 let geoLayer = null;
 let chomeLayer = null;
 let pollingStationLayer = null;
+const commentLayerGroup = L.layerGroup();
 
 function weightForZoom(baseWeight) {
 	const zoomDiff = map.getZoom() - MAP_INITIAL_ZOOM;
@@ -290,6 +297,378 @@ document.getElementById('polling-station-toggle').addEventListener('change', (e)
 		map.removeLayer(pollingStationLayer);
 	}
 });
+
+// ---- 地図コメント（issue#24） ----
+// term/areaに紐付かない独立データ。地図上の任意地点を長押し／ダブルタップ／右クリックすると
+// 新規作成ポップアップを開く。Leafletは長押しを標準サポートしないため、touchstart系の生イベントで
+// 自前実装する。ダブルクリック/ダブルタップはLeaflet標準のdblclickイベントがPC・モバイル双方を
+// 正規化してくれるため、既定のズーム動作をコメント作成用に転用するだけでよい。
+
+async function loadComments() {
+	const res = await apiFetch('/api/comments');
+	const comments = await res.json();
+	state.comments = new Map(comments.map((c) => [c.comment_id, c]));
+	renderCommentMarkers();
+}
+
+function commentCategoryMeta(category) {
+	return COMMENT_CATEGORIES.find((c) => c.value === category) ?? COMMENT_CATEGORIES[COMMENT_CATEGORIES.length - 1];
+}
+
+function commentPinColorFor(comment) {
+	if (comment.category === 'other') return comment.pin_color || COMMENT_OTHER_PIN_COLORS[0];
+	return commentCategoryMeta(comment.category).color;
+}
+
+function commentIconFor(comment) {
+	return L.divIcon({
+		className: '',
+		html: `<div class="comment-pin" style="background:${commentPinColorFor(comment)}"></div>`,
+		iconSize: [22, 22],
+		iconAnchor: [11, 22],
+	});
+}
+
+function renderCommentMarkers() {
+	commentLayerGroup.clearLayers();
+	if (state.commentFilter === 'none') {
+		if (map.hasLayer(commentLayerGroup)) map.removeLayer(commentLayerGroup);
+		return;
+	}
+	for (const comment of state.comments.values()) {
+		if (state.commentFilter !== 'all' && comment.category !== state.commentFilter) continue;
+		const marker = L.marker([comment.lat, comment.lng], { icon: commentIconFor(comment) });
+		marker.on('click', () => openCommentPopup(comment, marker));
+		commentLayerGroup.addLayer(marker);
+	}
+	if (!map.hasLayer(commentLayerGroup)) commentLayerGroup.addTo(map);
+}
+
+function populateCommentFilterSelect() {
+	const select = document.getElementById('comment-filter');
+	select.innerHTML = '';
+	const options = [
+		{ value: 'none', label: 'コメント: 表示しない' },
+		{ value: 'all', label: 'コメント: 全て表示' },
+		...COMMENT_CATEGORIES.map((c) => ({ value: c.value, label: `コメント: ${c.label}` })),
+	];
+	for (const opt of options) {
+		const option = document.createElement('option');
+		option.value = opt.value;
+		option.textContent = opt.label;
+		select.appendChild(option);
+	}
+	select.value = state.commentFilter;
+}
+
+document.getElementById('comment-filter').addEventListener('change', (e) => {
+	state.commentFilter = e.target.value;
+	renderCommentMarkers();
+});
+
+const COMMENT_LONG_PRESS_MS = 600;
+const COMMENT_LONG_PRESS_MOVE_TOLERANCE_PX = 12;
+const COMMENT_GESTURE_DEBOUNCE_MS = 500;
+let lastCommentGestureAt = 0;
+
+function triggerCommentCreateGesture(latlng) {
+	const now = Date.now();
+	if (now - lastCommentGestureAt < COMMENT_GESTURE_DEBOUNCE_MS) return;
+	lastCommentGestureAt = now;
+	openCreateCommentPopup(latlng);
+}
+
+map.doubleClickZoom.disable();
+map.on('dblclick', (e) => triggerCommentCreateGesture(e.latlng));
+map.on('contextmenu', (e) => {
+	L.DomEvent.preventDefault(e.originalEvent);
+	triggerCommentCreateGesture(e.latlng);
+});
+
+(function setupCommentLongPress() {
+	const container = map.getContainer();
+	let timer = null;
+	let startPoint = null;
+
+	function clear() {
+		if (timer) clearTimeout(timer);
+		timer = null;
+		startPoint = null;
+	}
+
+	container.addEventListener(
+		'touchstart',
+		(e) => {
+			if (e.touches.length !== 1) {
+				clear();
+				return;
+			}
+			const touch = e.touches[0];
+			startPoint = { x: touch.clientX, y: touch.clientY };
+			timer = setTimeout(() => {
+				const point = map.mouseEventToContainerPoint({ clientX: startPoint.x, clientY: startPoint.y });
+				const latlng = map.containerPointToLatLng(point);
+				clear();
+				triggerCommentCreateGesture(latlng);
+			}, COMMENT_LONG_PRESS_MS);
+		},
+		{ passive: true },
+	);
+
+	container.addEventListener(
+		'touchmove',
+		(e) => {
+			if (!startPoint || !timer) return;
+			const touch = e.touches[0];
+			const dx = touch.clientX - startPoint.x;
+			const dy = touch.clientY - startPoint.y;
+			if (Math.hypot(dx, dy) > COMMENT_LONG_PRESS_MOVE_TOLERANCE_PX) clear();
+		},
+		{ passive: true },
+	);
+
+	container.addEventListener('touchend', clear);
+	container.addEventListener('touchcancel', clear);
+})();
+
+function buildCommentCategorySelectHTML(selectedCategory) {
+	return COMMENT_CATEGORIES.map((c) => `<option value="${c.value}" ${c.value === selectedCategory ? 'selected' : ''}>${c.label}</option>`).join(
+		'',
+	);
+}
+
+function buildCommentColorPickerHTML(selectedColor) {
+	return COMMENT_OTHER_PIN_COLORS.map(
+		(color) => `
+		<label class="comment-color-option">
+			<input type="radio" name="comment-other-color" value="${color}" ${color === selectedColor ? 'checked' : ''}>
+			<span class="comment-color-swatch" style="background:${color}"></span>
+		</label>`,
+	).join('');
+}
+
+function openCreateCommentPopup(latlng) {
+	const popup = L.popup({ closeButton: true, maxWidth: 280 }).setLatLng(latlng);
+	popup.setContent(buildCommentCreateContent(latlng, popup));
+	popup.openOn(map);
+}
+
+function buildCommentCreateContent(latlng, popup) {
+	const container = document.createElement('div');
+	container.className = 'popup-content comment-edit';
+	L.DomEvent.disableClickPropagation(container);
+
+	const defaultCategory = COMMENT_CATEGORIES[0].value;
+	container.innerHTML = `
+		<div class="title">コメントを追加</div>
+		<label class="comment-field">理由
+			<select data-role="category-select">${buildCommentCategorySelectHTML(defaultCategory)}</select>
+		</label>
+		<div class="comment-color-picker" data-role="color-picker" style="display:${defaultCategory === 'other' ? 'flex' : 'none'};">
+			${buildCommentColorPickerHTML(COMMENT_OTHER_PIN_COLORS[0])}
+		</div>
+		<label class="comment-field">メモ（任意）
+			<textarea data-role="body-input" rows="3" placeholder="任意記入"></textarea>
+		</label>
+		<label class="comment-field">画像（任意）
+			<input type="file" accept="image/*" capture="environment" data-role="image-input">
+		</label>
+		<p class="error" data-role="comment-error"></p>
+		<div class="actions">
+			<button type="button" data-action="cancel">キャンセル</button>
+			<button type="button" data-action="save">追加する</button>
+		</div>
+	`;
+
+	const categorySelect = container.querySelector('[data-role="category-select"]');
+	const colorPicker = container.querySelector('[data-role="color-picker"]');
+	categorySelect.addEventListener('change', () => {
+		colorPicker.style.display = categorySelect.value === 'other' ? 'flex' : 'none';
+	});
+
+	container.querySelector('[data-action="cancel"]').addEventListener('click', () => {
+		popup.remove();
+	});
+
+	container.querySelector('[data-action="save"]').addEventListener('click', async () => {
+		const errorEl = container.querySelector('[data-role="comment-error"]');
+		const category = categorySelect.value;
+		const colorInput = container.querySelector('input[name="comment-other-color"]:checked');
+		const pinColor = category === 'other' ? (colorInput ? colorInput.value : COMMENT_OTHER_PIN_COLORS[0]) : undefined;
+		const bodyText = container.querySelector('[data-role="body-input"]').value.trim();
+		const imageInput = container.querySelector('[data-role="image-input"]');
+		const file = imageInput.files[0];
+
+		errorEl.textContent = '';
+		const res = await apiFetch('/api/comments', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ lat: latlng.lat, lng: latlng.lng, category, pin_color: pinColor, body: bodyText }),
+		});
+		let data = await res.json();
+		if (!res.ok) {
+			errorEl.textContent = data.error ?? '追加に失敗しました';
+			return;
+		}
+
+		if (file) {
+			const uploadRes = await apiFetch(`/api/comments/${data.comment_id}/image`, {
+				method: 'POST',
+				headers: { 'Content-Type': file.type },
+				body: file,
+			});
+			if (uploadRes.ok) {
+				data = await uploadRes.json();
+			}
+		}
+
+		state.comments.set(data.comment_id, data);
+		renderCommentMarkers();
+		popup.remove();
+	});
+
+	return container;
+}
+
+function openCommentPopup(comment, marker) {
+	marker.bindPopup(buildCommentViewContent(comment, marker)).openPopup();
+}
+
+function buildCommentViewContent(comment, marker) {
+	const container = document.createElement('div');
+	container.className = 'popup-content comment-view';
+	L.DomEvent.disableClickPropagation(container);
+
+	container.innerHTML = `
+		<div class="title">${escapeHtml(commentCategoryMeta(comment.category).label)}</div>
+		${comment.body ? `<p class="comment-body">${escapeHtml(comment.body)}</p>` : ''}
+		${comment.has_image ? '<img class="comment-image" data-role="comment-image" alt="添付画像">' : ''}
+		<div class="row"><span>登録:</span><span>${escapeHtml(comment.created_by_name)} / ${new Date(comment.created_at).toLocaleString('ja-JP')}</span></div>
+		<div class="row"><span>最終更新:</span><span>${escapeHtml(comment.updated_by_name)} / ${new Date(comment.updated_at).toLocaleString('ja-JP')}</span></div>
+		<div class="actions">
+			<button type="button" data-action="delete">削除する</button>
+			<button type="button" data-action="edit">編集する</button>
+		</div>
+	`;
+
+	if (comment.has_image) {
+		const img = container.querySelector('[data-role="comment-image"]');
+		apiFetch(`/api/comments/${comment.comment_id}/image`).then(async (res) => {
+			if (!res.ok) return;
+			const blob = await res.blob();
+			img.src = URL.createObjectURL(blob);
+		});
+	}
+
+	container.querySelector('[data-action="edit"]').addEventListener('click', () => {
+		marker.setPopupContent(buildCommentEditContent(comment, marker));
+		marker.getPopup().update();
+	});
+
+	container.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+		if (!confirm('このコメントを削除しますか？')) return;
+		const res = await apiFetch(`/api/comments/${comment.comment_id}`, { method: 'DELETE' });
+		if (!res.ok) {
+			const data = await res.json().catch(() => ({}));
+			alert(data.error ?? '削除に失敗しました');
+			return;
+		}
+		map.closePopup();
+		state.comments.delete(comment.comment_id);
+		renderCommentMarkers();
+	});
+
+	return container;
+}
+
+function buildCommentEditContent(comment, marker) {
+	const container = document.createElement('div');
+	container.className = 'popup-content comment-edit';
+	L.DomEvent.disableClickPropagation(container);
+
+	container.innerHTML = `
+		<div class="title">コメントを編集</div>
+		<label class="comment-field">理由
+			<select data-role="category-select">${buildCommentCategorySelectHTML(comment.category)}</select>
+		</label>
+		<div class="comment-color-picker" data-role="color-picker" style="display:${comment.category === 'other' ? 'flex' : 'none'};">
+			${buildCommentColorPickerHTML(comment.pin_color || COMMENT_OTHER_PIN_COLORS[0])}
+		</div>
+		<label class="comment-field">メモ（任意）
+			<textarea data-role="body-input" rows="3" placeholder="任意記入">${escapeHtml(comment.body || '')}</textarea>
+		</label>
+		<label class="comment-field">画像（任意）
+			<input type="file" accept="image/*" capture="environment" data-role="image-input">
+		</label>
+		${comment.has_image ? '<button type="button" class="comment-remove-image" data-action="remove-image">添付画像を削除</button>' : ''}
+		<p class="error" data-role="comment-error"></p>
+		<div class="actions">
+			<button type="button" data-action="cancel">キャンセル</button>
+			<button type="button" data-action="save">更新する</button>
+		</div>
+	`;
+
+	const categorySelect = container.querySelector('[data-role="category-select"]');
+	const colorPicker = container.querySelector('[data-role="color-picker"]');
+	categorySelect.addEventListener('change', () => {
+		colorPicker.style.display = categorySelect.value === 'other' ? 'flex' : 'none';
+	});
+
+	container.querySelector('[data-action="cancel"]').addEventListener('click', () => {
+		marker.setPopupContent(buildCommentViewContent(comment, marker));
+		marker.getPopup().update();
+	});
+
+	if (comment.has_image) {
+		container.querySelector('[data-action="remove-image"]').addEventListener('click', async () => {
+			const res = await apiFetch(`/api/comments/${comment.comment_id}/image`, { method: 'DELETE' });
+			if (!res.ok) return;
+			const data = await res.json();
+			state.comments.set(data.comment_id, data);
+			renderCommentMarkers();
+			map.closePopup();
+		});
+	}
+
+	container.querySelector('[data-action="save"]').addEventListener('click', async () => {
+		const errorEl = container.querySelector('[data-role="comment-error"]');
+		const category = categorySelect.value;
+		const colorInput = container.querySelector('input[name="comment-other-color"]:checked');
+		const pinColor = category === 'other' ? (colorInput ? colorInput.value : COMMENT_OTHER_PIN_COLORS[0]) : undefined;
+		const bodyText = container.querySelector('[data-role="body-input"]').value.trim();
+		const imageInput = container.querySelector('[data-role="image-input"]');
+		const file = imageInput.files[0];
+
+		errorEl.textContent = '';
+		const res = await apiFetch(`/api/comments/${comment.comment_id}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ category, pin_color: pinColor, body: bodyText }),
+		});
+		let data = await res.json();
+		if (!res.ok) {
+			errorEl.textContent = data.error ?? '更新に失敗しました';
+			return;
+		}
+
+		if (file) {
+			const uploadRes = await apiFetch(`/api/comments/${comment.comment_id}/image`, {
+				method: 'POST',
+				headers: { 'Content-Type': file.type },
+				body: file,
+			});
+			if (uploadRes.ok) {
+				data = await uploadRes.json();
+			}
+		}
+
+		state.comments.set(data.comment_id, data);
+		renderCommentMarkers();
+		map.closePopup();
+	});
+
+	return container;
+}
 
 // ---- ポップアップ ----
 // ポップアップ内のボタン/セレクト操作がクリックとして地図側に伝播すると、Leafletの
@@ -692,11 +1071,13 @@ async function init() {
 	const usersRes = await fetch('/api/users/active');
 	state.activeUsers = await usersRes.json();
 	populateAssigneeFilterSelect();
+	populateCommentFilterSelect();
 	await loadBoundary();
 	if (typeof CHOME_BOUNDARY_GEOJSON_PATH !== 'undefined') {
 		await loadChomeBoundary();
 	}
 	await loadPollingStations();
+	await loadComments();
 	await loadTerms();
 }
 

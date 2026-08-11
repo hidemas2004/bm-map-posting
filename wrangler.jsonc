@@ -22,6 +22,12 @@
           "database_id": "972ced08-252f-46f2-b143-040ada84c6b0"
         }
       ],
+      "r2_buckets": [
+        {
+          "binding": "COMMENT_IMAGES",
+          "bucket_name": "bm-posting-comment-images-staging"
+        }
+      ],
       "vars": {
         "REGION_ID": "14213-yamato",
         "REGION_DISPLAY_NAME": "大和市",
@@ -38,6 +44,12 @@
           "binding": "DB",
           "database_name": "bm-posting-db-14213-yamato",
           "database_id": "33663a66-7b1e-4bf4-952d-d77c2b8ab852"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "COMMENT_IMAGES",
+          "bucket_name": "bm-posting-comment-images-14213-yamato"
         }
       ],
       "vars": {
@@ -58,6 +70,12 @@
           "database_id": "99601ab9-bf43-4b04-9703-61e9a08d3e08"
         }
       ],
+      "r2_buckets": [
+        {
+          "binding": "COMMENT_IMAGES",
+          "bucket_name": "bm-posting-comment-images-14206-odawara"
+        }
+      ],
       "vars": {
         "REGION_ID": "14206-odawara",
         "REGION_DISPLAY_NAME": "小田原市",
@@ -74,6 +92,12 @@
           "binding": "DB",
           "database_name": "bm-posting-db-14203-hiratsuka",
           "database_id": "c08e0625-f148-4455-ae70-0e519505ecb0"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "COMMENT_IMAGES",
+          "bucket_name": "bm-posting-comment-images-14203-hiratsuka"
         }
       ],
       "vars": {
