@@ -278,10 +278,11 @@ async function loadPollingStations() {
 			address.textContent = s.address;
 			popup.appendChild(address);
 		}
+		const uncertainMark = s.location_uncertain ? '<span class="pin-uncertain-mark">?</span>' : '';
 		return L.marker([s.lat, s.lng], {
 			icon: L.divIcon({
 				className: '',
-				html: `<div class="polling-station-pin" style="background:${POLLING_STATION_PIN_COLOR}"></div>`,
+				html: `<div class="polling-station-pin" style="background:${POLLING_STATION_PIN_COLOR}">${uncertainMark}</div>`,
 				iconSize: [22, 22],
 				iconAnchor: [11, 22],
 			}),

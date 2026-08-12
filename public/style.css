@@ -115,6 +115,7 @@ body.list-page #header a#back-link {
 .data-table th, .data-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
 .data-table th { background: #f9fafb; position: sticky; top: 0; z-index: 2; }
 .data-table tbody tr:hover td:not(.sticky-col) { background: #f9fafb; }
+.status-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; color: #fff; }
 /* 見出し行(見出し行固定)・先頭列(列固定)。leftの実値はJS側で計算して設定する */
 .data-table td.sticky-col { position: sticky; background: #fff; z-index: 1; }
 .data-table th.sticky-col { z-index: 3; }
@@ -213,6 +214,16 @@ body.list-page #header a#back-link {
   position: absolute; top: 50%; left: 50%;
   width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px;
   background: #ffffff; border-radius: 50%;
+}
+/* 住所とCSV座標の整合性がジオコーディングで確認できていない投票所（scripts/upload-polling-stations.mjs
+   が判定）に表示する「？」。中心の白丸(::after)より手前に出るようz-indexを明示し、親の
+   rotate(-45deg)を打ち消すrotate(45deg)で文字を正立させる。 */
+.pin-uncertain-mark {
+  position: absolute; top: 50%; left: 50%;
+  width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px;
+  transform: rotate(45deg); z-index: 1;
+  font-size: 6px; font-weight: bold; line-height: 7px; text-align: center;
+  color: #111827;
 }
 
 .header-checkbox {

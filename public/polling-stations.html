@@ -22,7 +22,7 @@
   <div class="data-table-wrap">
     <table class="data-table">
       <thead>
-        <tr><th>名称</th><th>住所</th><th>緯度</th><th>経度</th></tr>
+        <tr><th>名称</th><th>住所</th><th>緯度</th><th>経度</th><th>要確認</th></tr>
       </thead>
       <tbody id="stations-tbody"></tbody>
     </table>
@@ -34,15 +34,14 @@
       <code>name, address, lat, lng</code>列を持つCSVをアップロードしてください
       （<code>name</code>, <code>lat</code>, <code>lng</code>は必須、<code>address</code>は空欄可）。
       アップロードすると<strong>現在登録されている投票所は全て、CSVの内容で置き換わります</strong>
-      （差分追加ではなく全件洗い替え）。
+      （差分追加ではなく全件洗い替え）。<br>
+      このアップロードは座標をそのまま反映します（測地系チェック・ジオコーディングは行いません）。
+      投票所マスタの新規投入・座標更新は <code>npm run upload-polling-stations</code> を使ってください。
     </p>
     <input type="file" id="import-file" accept=".csv,text/csv">
     <button id="import-button" type="button">アップロードして反映</button>
-    <button id="force-import-button" type="button" hidden>チェック結果を確認した上で強制インポート</button>
     <p class="error" id="import-error"></p>
     <p class="success" id="import-success"></p>
-    <p class="warning" id="import-note"></p>
-    <ul class="import-warnings" id="import-warnings"></ul>
   </section>
 </main>
 <script src="/polling-stations.js"></script>

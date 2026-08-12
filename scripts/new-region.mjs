@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ask, confirm, closePrompt } from './lib/prompt.mjs';
+import { buildCorrectedPollingStationsCsv } from './lib/polling-stations-correction.mjs';
 import { appendEnvBlock, envExists } from './lib/wrangler-jsonc.mjs';
 import { fetchCityBoundary, fetchChomeBoundary, buildChomeAreaIdUpdateSql } from './lib/estat-boundary.mjs';
 import { assignChomeAreaIds } from './lib/geo.mjs';
@@ -355,8 +356,10 @@ async function main() {
 	let deployedUrl = extractDeployedUrl(deployOutput);
 
 	// --- 投票所データの投入（任意。regions/<id>/polling_stations.csv がある場合のみ）---
-	// 座標の測地系（日本測地系/世界測地系）自動検出・補正（issue#16対応）はWorker内で完結するロジック
-	// のため、Node側でSQLに変換して直接投入せず、実際にデプロイされたWorkerのAPIをそのまま叩く。
+	// 座標の測地系（日本測地系/世界測地系）自動検出・補正（issue#16対応）はCloudflare Workersの
+	// subrequest数上限（1 invocationあたり外部fetch 50件）を避けるため、Node側
+	// （scripts/lib/polling-stations-correction.mjs）で行ってから、補正済みCSVをWorkerのAPIへ
+	// アップロードする（bm-map-poster issue#3と同根の対応）。
 	const pollingCsvPath = path.join(dir, 'polling_stations.csv');
 	if (existsSync(pollingCsvPath) && !meta.pollingStationsSeeded) {
 		console.log('\n--- 投票所データの投入 ---');
@@ -376,7 +379,8 @@ async function main() {
 				console.error(`\n管理者ログインに失敗しました（${loginRes.status}）。投票所データの投入をスキップします。後で /polling-stations.html から手動でアップロードしてください。`);
 			} else {
 				const { token } = await loginRes.json();
-				const csvText = readFileSync(pollingCsvPath, 'utf8');
+				const { csvText, summary } = await buildCorrectedPollingStationsCsv(readFileSync(pollingCsvPath, 'utf8'));
+				for (const line of summary) console.log(line);
 				const importRes = await fetch(`${deployedUrl}/api/polling-stations/import`, {
 					method: 'POST',
 					headers: { Authorization: `Bearer ${token}`, 'content-type': 'text/csv' },

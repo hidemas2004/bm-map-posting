@@ -1,5 +1,4 @@
 import { parseCsv, stripBom } from './csv';
-import { checkAndCorrectDatum, type DatumRowResult } from './lib/datum_check';
 
 export interface PollingStationsEnv {
 	DB: D1Database;
@@ -11,32 +10,28 @@ interface PollingStationRow {
 	address: string;
 	lat: number;
 	lng: number;
+	location_uncertain: number;
 }
 
 export async function listPollingStations(env: PollingStationsEnv): Promise<Response> {
 	const { results } = await env.DB.prepare(
-		'SELECT station_id, name, address, lat, lng FROM polling_stations ORDER BY station_id',
+		'SELECT station_id, name, address, lat, lng, location_uncertain FROM polling_stations ORDER BY station_id',
 	).all<PollingStationRow>();
 	return Response.json(results);
 }
 
 /**
- * 投票所マスタ一括投入（管理者限定）。CSVヘッダ: name, address, lat, lng
- * （name, lat, lng は必須。address は空欄可）。
+ * 投票所マスタ一括投入（管理者限定）。CSVヘッダ: name, address, lat, lng, location_uncertain
+ * （name, lat, lng は必須。address, location_uncertain は空欄可）。
  * 投票所には area_id/user_id のような自然キーがCSV側に無い前提のため、アップサートではなく
  * アップロードのたびに全件洗い替え（DELETE→INSERT）する。
+ * location_uncertain列は、住所とCSV座標の整合性をジオコーディングで確認できたかどうかの
+ * フラグで、`scripts/upload-polling-stations.mjs`が算出して埋める。このWorker側では測地系
+ * チェック・ジオコーディングは一切行わない（Cloudflare Workersのsubrequest数上限のため）。
+ * CSVの座標はそのまま反映する。全件洗い替えのため「列が無ければ既存値を維持」のような
+ * 特別扱いはせず、列が無い/空欄の行は単純に0（確認済み扱い）とする。
  */
-function datumCheckPayload(datumCheck: DatumRowResult[]) {
-	return datumCheck.map((r) => ({
-		line: r.line,
-		bucket: r.bucket,
-		dist_raw_m: r.distRawM,
-		dist_conv_m: r.distConvM,
-	}));
-}
-
 export async function importPollingStations(request: Request, env: PollingStationsEnv): Promise<Response> {
-	const force = new URL(request.url).searchParams.get('force') === 'true';
 	const text = stripBom(await request.text());
 
 	const rows = parseCsv(text);
@@ -50,6 +45,7 @@ export async function importPollingStations(request: Request, env: PollingStatio
 		address: header.indexOf('address'),
 		lat: header.indexOf('lat'),
 		lng: header.indexOf('lng'),
+		location_uncertain: header.indexOf('location_uncertain'),
 	};
 	if (colIndex.name === -1 || colIndex.lat === -1 || colIndex.lng === -1) {
 		return Response.json({ error: 'CSVヘッダに name, lat, lng が必要です' }, { status: 400 });
@@ -60,13 +56,15 @@ export async function importPollingStations(request: Request, env: PollingStatio
 		return Response.json({ error: 'データ行がありません' }, { status: 400 });
 	}
 
-	const stations: { line: number; name: string; address: string; lat: number; lng: number }[] = [];
+	const stations: { line: number; name: string; address: string; lat: number; lng: number; locationUncertain: number }[] = [];
 	for (const [i, r] of dataRows.entries()) {
 		const lineNo = i + 2; // ヘッダ行ぶん+1、1始まりで+1
 		const name = (r[colIndex.name] ?? '').trim();
 		const address = colIndex.address !== -1 ? (r[colIndex.address] ?? '').trim() : '';
 		const lat = Number((r[colIndex.lat] ?? '').trim());
 		const lng = Number((r[colIndex.lng] ?? '').trim());
+		const uncertainRaw = colIndex.location_uncertain !== -1 ? (r[colIndex.location_uncertain] ?? '').trim() : '';
+		const locationUncertain = uncertainRaw === '1' ? 1 : 0;
 
 		if (!name) {
 			return Response.json({ error: `${lineNo}行目: name は必須です` }, { status: 400 });
@@ -78,67 +76,18 @@ export async function importPollingStations(request: Request, env: PollingStatio
 			return Response.json({ error: `${lineNo}行目: lng が不正です` }, { status: 400 });
 		}
 
-		stations.push({ line: lineNo, name, address, lat, lng });
+		stations.push({ line: lineNo, name, address, lat, lng, locationUncertain });
 	}
-
-	// 測地系（日本測地系/世界測地系）のズレを自動検出・補正する（issue#16）。
-	// 住所テキストをジオコーディングした期待座標とCSVの座標を突き合わせ、バッチ全体が
-	// 日本測地系とみなせる場合は全行を世界測地系に補正してからインポートする。
-	const datumCheck = await checkAndCorrectDatum(stations);
-
-	if (datumCheck.verdict === 'abort' && !force) {
-		return Response.json(
-			{
-				error: '住所と座標の整合性が確認できないため、インポートを中断しました。行ごとの判定結果を確認の上、必要であれば強制インポートしてください。',
-				datum_check: {
-					ok_count: datumCheck.okCount,
-					candidate_count: datumCheck.candidateCount,
-					unresolved_count: datumCheck.unresolvedCount,
-					no_address_count: datumCheck.noAddressCount,
-					rows: datumCheckPayload(datumCheck.rows),
-				},
-			},
-			{ status: 400 },
-		);
-	}
-
-	const finalStations =
-		datumCheck.verdict === 'correct_all'
-			? stations.map((s) => {
-					const corrected = datumCheck.correctedCoords.get(s.line);
-					return corrected ? { ...s, lat: corrected.lat, lng: corrected.lng } : s;
-				})
-			: stations;
 
 	const statements = [
 		env.DB.prepare('DELETE FROM polling_stations'),
-		...finalStations.map((s) =>
-			env.DB.prepare('INSERT INTO polling_stations (name, address, lat, lng) VALUES (?, ?, ?, ?)').bind(
-				s.name,
-				s.address,
-				s.lat,
-				s.lng,
-			),
+		...stations.map((s) =>
+			env.DB.prepare(
+				'INSERT INTO polling_stations (name, address, lat, lng, location_uncertain) VALUES (?, ?, ?, ?, ?)',
+			).bind(s.name, s.address, s.lat, s.lng, s.locationUncertain),
 		),
 	];
 	await env.DB.batch(statements);
 
-	const forced = datumCheck.verdict === 'abort' && force;
-	return Response.json({
-		imported: finalStations.length,
-		datum_corrected: datumCheck.verdict === 'correct_all',
-		corrected_count: datumCheck.correctedCount,
-		datum_check_note: datumCheck.note,
-		warnings: datumCheck.warnings,
-		datum_check_forced: forced,
-		datum_check: forced
-			? {
-					ok_count: datumCheck.okCount,
-					candidate_count: datumCheck.candidateCount,
-					unresolved_count: datumCheck.unresolvedCount,
-					no_address_count: datumCheck.noAddressCount,
-					rows: datumCheckPayload(datumCheck.rows),
-				}
-			: undefined,
-	});
+	return Response.json({ imported: stations.length });
 }
