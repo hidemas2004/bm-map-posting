@@ -57,7 +57,15 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
 #header.collapsed .header-row { display: none; }
 #header.collapsed .header-toggle-hint::after { content: '▼'; }
 
-#map { flex: 1 1 auto; min-height: 0; touch-action: none; }
+/* 長押し(issue#24のコメント作成ジェスチャー)は生のtouchstart/touchendで自前実装しており、
+   ブラウザ標準の「長押し→テキスト選択」ジェスチャーを止める手段が無いため、#map配下では
+   常時テキスト選択・iOSのコールアウトを無効化する。無効化しないと、長押し完了時に開く
+   ポップアップの文言がその位置で選択状態のまま表示されてしまう。 */
+#map {
+  flex: 1 1 auto; min-height: 0; touch-action: none;
+  -webkit-user-select: none; -moz-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+}
 
 /* top:100%で親#headerの下端の外側にはみ出す前提。#headerにoverflow-x/yを
    付けると丸ごとクリップされて非表示になるので注意（#header付近のコメント参照）。 */
@@ -211,3 +219,45 @@ body.list-page #header a#back-link {
   display: flex; align-items: center; gap: 4px;
   font-size: 13px; cursor: pointer; white-space: nowrap;
 }
+
+#comment-filter-checkboxes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* 地図コメントピン（issue#24）。投票所ピンと同じしずく型だが、背景色はカテゴリごとに
+   異なる（JS側でinline style指定）ため、投票所ピンと見分けやすいようカテゴリ別の記号
+   （data-symbol属性、JS側のCOMMENT_CATEGORY_SYMBOLSで設定）を乗せて区別する。 */
+.comment-pin {
+  position: relative;
+  width: 22px; height: 22px;
+  border: 2px solid #ffffff;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  cursor: pointer;
+}
+.comment-pin::after {
+  content: attr(data-symbol);
+  position: absolute; top: 50%; left: 50%;
+  width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  transform: rotate(45deg);
+  color: #ffffff; font-size: 12px; font-weight: 700; line-height: 14px; text-align: center;
+}
+
+.popup-content.comment-edit .comment-field { display: block; font-size: 12px; margin: 6px 0; }
+.popup-content.comment-edit select,
+.popup-content.comment-edit textarea,
+.popup-content.comment-edit input[type=file] {
+  display: block; width: 100%; margin-top: 4px; font-size: 13px; padding: 4px; font-family: inherit;
+}
+.popup-content.comment-edit textarea { resize: vertical; }
+.popup-content.comment-edit .actions,
+.popup-content.comment-view .actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+
+.comment-color-picker { display: flex; gap: 10px; margin: 6px 0; }
+.comment-color-option { display: flex; align-items: center; cursor: pointer; }
+.comment-color-option input { position: absolute; opacity: 0; width: 0; height: 0; }
+.comment-color-swatch {
+  width: 24px; height: 24px; border-radius: 50%; border: 2px solid #d1d5db; display: block;
+}
+.comment-color-option input:checked + .comment-color-swatch { border-color: #111827; border-width: 3px; }
+
+.popup-content.comment-view .comment-body { white-space: pre-wrap; margin: 6px 0; }
