@@ -8,6 +8,7 @@
   ],
   "mapZoom": 13,
   "hasChomeBoundary": true,
+  "deployedUrl": "https://bm-map-posting-14213-yamato.blackdog-yokohama-japan.workers.dev",
   "adminUserId": "admin",
   "adminName": "管理者",
   "databaseId": "33663a66-7b1e-4bf4-952d-d77c2b8ab852",

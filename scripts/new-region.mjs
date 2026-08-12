@@ -354,6 +354,12 @@ async function main() {
 	const deployOutput = run(NPX, ['wrangler', 'deploy', '--env', regionId], { silent: true });
 	console.log(deployOutput);
 	let deployedUrl = extractDeployedUrl(deployOutput);
+	if (deployedUrl && meta.deployedUrl !== deployedUrl) {
+		// scripts/upload-polling-stations.mjs 等がアップロード先を自動決定するために使う
+		// （手入力によるリージョン取り違え事故を防ぐ）。
+		meta.deployedUrl = deployedUrl;
+		writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+	}
 
 	// --- 投票所データの投入（任意。regions/<id>/polling_stations.csv がある場合のみ）---
 	// 座標の測地系（日本測地系/世界測地系）自動検出・補正（issue#16対応）はCloudflare Workersの

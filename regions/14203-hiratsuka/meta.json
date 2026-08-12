@@ -8,6 +8,7 @@
   ],
   "mapZoom": 13,
   "hasChomeBoundary": true,
+  "deployedUrl": "https://bm-map-posting-14203-hiratsuka.blackdog-yokohama-japan.workers.dev",
   "adminUserId": "admin",
   "adminName": "hidemas@admin",
   "databaseId": "c08e0625-f148-4455-ae70-0e519505ecb0",
