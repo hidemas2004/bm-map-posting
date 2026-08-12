@@ -18,7 +18,7 @@ const state = {
 	gpsMarker: null,
 	assigneeFilter: '', // ''=全体表示、それ以外はuser_id
 	comments: new Map(), // comment_id -> comment（issue#24。全ターム共通データなのでterm切替の影響を受けない）
-	commentFilter: 'none', // 'none'=表示しない/'all'=全て表示/カテゴリ値
+	commentFilterCategories: new Set(), // 表示中のカテゴリ集合（空＝表示しない）
 };
 
 function escapeHtml(str) {
@@ -320,10 +320,16 @@ function commentPinColorFor(comment) {
 	return commentCategoryMeta(comment.category).color;
 }
 
+const COMMENT_CATEGORY_SYMBOLS = { no_posting: 'X', poster_candidate: 'P', other: '!' };
+
+function commentSymbolFor(comment) {
+	return COMMENT_CATEGORY_SYMBOLS[comment.category] ?? '!';
+}
+
 function commentIconFor(comment) {
 	return L.divIcon({
 		className: '',
-		html: `<div class="comment-pin" style="background:${commentPinColorFor(comment)}"></div>`,
+		html: `<div class="comment-pin" data-symbol="${commentSymbolFor(comment)}" style="background:${commentPinColorFor(comment)}"></div>`,
 		iconSize: [22, 22],
 		iconAnchor: [11, 22],
 	});
@@ -331,40 +337,38 @@ function commentIconFor(comment) {
 
 function renderCommentMarkers() {
 	commentLayerGroup.clearLayers();
-	if (state.commentFilter === 'none') {
+	if (state.commentFilterCategories.size === 0) {
 		if (map.hasLayer(commentLayerGroup)) map.removeLayer(commentLayerGroup);
 		return;
 	}
 	for (const comment of state.comments.values()) {
-		if (state.commentFilter !== 'all' && comment.category !== state.commentFilter) continue;
+		if (!state.commentFilterCategories.has(comment.category)) continue;
 		const marker = L.marker([comment.lat, comment.lng], { icon: commentIconFor(comment) });
-		marker.on('click', () => openCommentPopup(comment, marker));
+		marker.bindPopup(buildCommentViewContent(comment, marker));
 		commentLayerGroup.addLayer(marker);
 	}
 	if (!map.hasLayer(commentLayerGroup)) commentLayerGroup.addTo(map);
 }
 
-function populateCommentFilterSelect() {
-	const select = document.getElementById('comment-filter');
-	select.innerHTML = '';
-	const options = [
-		{ value: 'none', label: 'コメント: 表示しない' },
-		{ value: 'all', label: 'コメント: 全て表示' },
-		...COMMENT_CATEGORIES.map((c) => ({ value: c.value, label: `コメント: ${c.label}` })),
-	];
-	for (const opt of options) {
-		const option = document.createElement('option');
-		option.value = opt.value;
-		option.textContent = opt.label;
-		select.appendChild(option);
+function populateCommentFilterCheckboxes() {
+	const container = document.getElementById('comment-filter-checkboxes');
+	container.innerHTML = '';
+	for (const category of COMMENT_CATEGORIES) {
+		const label = document.createElement('label');
+		label.className = 'header-checkbox';
+		const input = document.createElement('input');
+		input.type = 'checkbox';
+		input.checked = state.commentFilterCategories.has(category.value);
+		input.addEventListener('change', () => {
+			if (input.checked) state.commentFilterCategories.add(category.value);
+			else state.commentFilterCategories.delete(category.value);
+			renderCommentMarkers();
+		});
+		label.appendChild(input);
+		label.appendChild(document.createTextNode(category.label));
+		container.appendChild(label);
 	}
-	select.value = state.commentFilter;
 }
-
-document.getElementById('comment-filter').addEventListener('change', (e) => {
-	state.commentFilter = e.target.value;
-	renderCommentMarkers();
-});
 
 const COMMENT_LONG_PRESS_MS = 600;
 const COMMENT_LONG_PRESS_MOVE_TOLERANCE_PX = 12;
@@ -470,9 +474,6 @@ function buildCommentCreateContent(latlng, popup) {
 		<label class="comment-field">メモ（任意）
 			<textarea data-role="body-input" rows="3" placeholder="任意記入"></textarea>
 		</label>
-		<label class="comment-field">画像（任意）
-			<input type="file" accept="image/*" capture="environment" data-role="image-input">
-		</label>
 		<p class="error" data-role="comment-error"></p>
 		<div class="actions">
 			<button type="button" data-action="cancel">キャンセル</button>
@@ -496,8 +497,6 @@ function buildCommentCreateContent(latlng, popup) {
 		const colorInput = container.querySelector('input[name="comment-other-color"]:checked');
 		const pinColor = category === 'other' ? (colorInput ? colorInput.value : COMMENT_OTHER_PIN_COLORS[0]) : undefined;
 		const bodyText = container.querySelector('[data-role="body-input"]').value.trim();
-		const imageInput = container.querySelector('[data-role="image-input"]');
-		const file = imageInput.files[0];
 
 		errorEl.textContent = '';
 		const res = await apiFetch('/api/comments', {
@@ -505,21 +504,10 @@ function buildCommentCreateContent(latlng, popup) {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ lat: latlng.lat, lng: latlng.lng, category, pin_color: pinColor, body: bodyText }),
 		});
-		let data = await res.json();
+		const data = await res.json();
 		if (!res.ok) {
 			errorEl.textContent = data.error ?? '追加に失敗しました';
 			return;
-		}
-
-		if (file) {
-			const uploadRes = await apiFetch(`/api/comments/${data.comment_id}/image`, {
-				method: 'POST',
-				headers: { 'Content-Type': file.type },
-				body: file,
-			});
-			if (uploadRes.ok) {
-				data = await uploadRes.json();
-			}
 		}
 
 		state.comments.set(data.comment_id, data);
@@ -530,10 +518,6 @@ function buildCommentCreateContent(latlng, popup) {
 	return container;
 }
 
-function openCommentPopup(comment, marker) {
-	marker.bindPopup(buildCommentViewContent(comment, marker)).openPopup();
-}
-
 function buildCommentViewContent(comment, marker) {
 	const container = document.createElement('div');
 	container.className = 'popup-content comment-view';
@@ -542,7 +526,6 @@ function buildCommentViewContent(comment, marker) {
 	container.innerHTML = `
 		<div class="title">${escapeHtml(commentCategoryMeta(comment.category).label)}</div>
 		${comment.body ? `<p class="comment-body">${escapeHtml(comment.body)}</p>` : ''}
-		${comment.has_image ? '<img class="comment-image" data-role="comment-image" alt="添付画像">' : ''}
 		<div class="row"><span>登録:</span><span>${escapeHtml(comment.created_by_name)} / ${new Date(comment.created_at).toLocaleString('ja-JP')}</span></div>
 		<div class="row"><span>最終更新:</span><span>${escapeHtml(comment.updated_by_name)} / ${new Date(comment.updated_at).toLocaleString('ja-JP')}</span></div>
 		<div class="actions">
@@ -550,15 +533,6 @@ function buildCommentViewContent(comment, marker) {
 			<button type="button" data-action="edit">編集する</button>
 		</div>
 	`;
-
-	if (comment.has_image) {
-		const img = container.querySelector('[data-role="comment-image"]');
-		apiFetch(`/api/comments/${comment.comment_id}/image`).then(async (res) => {
-			if (!res.ok) return;
-			const blob = await res.blob();
-			img.src = URL.createObjectURL(blob);
-		});
-	}
 
 	container.querySelector('[data-action="edit"]').addEventListener('click', () => {
 		marker.setPopupContent(buildCommentEditContent(comment, marker));
@@ -597,10 +571,6 @@ function buildCommentEditContent(comment, marker) {
 		<label class="comment-field">メモ（任意）
 			<textarea data-role="body-input" rows="3" placeholder="任意記入">${escapeHtml(comment.body || '')}</textarea>
 		</label>
-		<label class="comment-field">画像（任意）
-			<input type="file" accept="image/*" capture="environment" data-role="image-input">
-		</label>
-		${comment.has_image ? '<button type="button" class="comment-remove-image" data-action="remove-image">添付画像を削除</button>' : ''}
 		<p class="error" data-role="comment-error"></p>
 		<div class="actions">
 			<button type="button" data-action="cancel">キャンセル</button>
@@ -619,25 +589,12 @@ function buildCommentEditContent(comment, marker) {
 		marker.getPopup().update();
 	});
 
-	if (comment.has_image) {
-		container.querySelector('[data-action="remove-image"]').addEventListener('click', async () => {
-			const res = await apiFetch(`/api/comments/${comment.comment_id}/image`, { method: 'DELETE' });
-			if (!res.ok) return;
-			const data = await res.json();
-			state.comments.set(data.comment_id, data);
-			renderCommentMarkers();
-			map.closePopup();
-		});
-	}
-
 	container.querySelector('[data-action="save"]').addEventListener('click', async () => {
 		const errorEl = container.querySelector('[data-role="comment-error"]');
 		const category = categorySelect.value;
 		const colorInput = container.querySelector('input[name="comment-other-color"]:checked');
 		const pinColor = category === 'other' ? (colorInput ? colorInput.value : COMMENT_OTHER_PIN_COLORS[0]) : undefined;
 		const bodyText = container.querySelector('[data-role="body-input"]').value.trim();
-		const imageInput = container.querySelector('[data-role="image-input"]');
-		const file = imageInput.files[0];
 
 		errorEl.textContent = '';
 		const res = await apiFetch(`/api/comments/${comment.comment_id}`, {
@@ -645,21 +602,10 @@ function buildCommentEditContent(comment, marker) {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ category, pin_color: pinColor, body: bodyText }),
 		});
-		let data = await res.json();
+		const data = await res.json();
 		if (!res.ok) {
 			errorEl.textContent = data.error ?? '更新に失敗しました';
 			return;
-		}
-
-		if (file) {
-			const uploadRes = await apiFetch(`/api/comments/${comment.comment_id}/image`, {
-				method: 'POST',
-				headers: { 'Content-Type': file.type },
-				body: file,
-			});
-			if (uploadRes.ok) {
-				data = await uploadRes.json();
-			}
 		}
 
 		state.comments.set(data.comment_id, data);
@@ -1071,7 +1017,7 @@ async function init() {
 	const usersRes = await fetch('/api/users/active');
 	state.activeUsers = await usersRes.json();
 	populateAssigneeFilterSelect();
-	populateCommentFilterSelect();
+	populateCommentFilterCheckboxes();
 	await loadBoundary();
 	if (typeof CHOME_BOUNDARY_GEOJSON_PATH !== 'undefined') {
 		await loadChomeBoundary();

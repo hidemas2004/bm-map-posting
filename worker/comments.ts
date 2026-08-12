@@ -19,7 +19,6 @@ export const COMMENT_OTHER_PIN_COLORS = ['#f59e0b', '#7c3aed', '#0d9488'] as con
 
 export interface CommentsEnv {
 	DB: D1Database;
-	COMMENT_IMAGES: R2Bucket;
 }
 
 interface CommentRow {
@@ -29,8 +28,6 @@ interface CommentRow {
 	category: CommentCategory;
 	pin_color: string;
 	body: string;
-	image_key: string | null;
-	image_content_type: string | null;
 	created_by_id: string;
 	created_by_name: string;
 	created_at: string;
@@ -47,7 +44,6 @@ function toPublicComment(row: CommentRow) {
 		category: row.category,
 		pin_color: row.pin_color,
 		body: row.body,
-		has_image: row.image_key !== null,
 		created_by_name: row.created_by_name,
 		created_at: row.created_at,
 		updated_by_name: row.updated_by_name,
@@ -135,107 +131,9 @@ export async function deleteComment(env: CommentsEnv, commentId: string): Promis
 	if (!Number.isInteger(id)) {
 		return Response.json({ error: 'comment_id が不正です' }, { status: 400 });
 	}
-	const row = await env.DB.prepare('SELECT image_key FROM comments WHERE comment_id = ?')
-		.bind(id)
-		.first<{ image_key: string | null }>();
-	if (!row) {
+	const result = await env.DB.prepare('DELETE FROM comments WHERE comment_id = ?').bind(id).run();
+	if (result.meta.changes === 0) {
 		return Response.json({ error: '指定されたコメントが見つかりません' }, { status: 404 });
 	}
-	if (row.image_key) {
-		await env.COMMENT_IMAGES.delete(row.image_key);
-	}
-	await env.DB.prepare('DELETE FROM comments WHERE comment_id = ?').bind(id).run();
 	return Response.json({ ok: true });
-}
-
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
-
-export async function uploadCommentImage(request: Request, env: CommentsEnv, user: SessionUser, commentId: string): Promise<Response> {
-	const id = Number(commentId);
-	if (!Number.isInteger(id)) {
-		return Response.json({ error: 'comment_id が不正です' }, { status: 400 });
-	}
-	const existing = await env.DB.prepare('SELECT image_key FROM comments WHERE comment_id = ?')
-		.bind(id)
-		.first<{ image_key: string | null }>();
-	if (!existing) {
-		return Response.json({ error: '指定されたコメントが見つかりません' }, { status: 404 });
-	}
-
-	const contentType = (request.headers.get('content-type') ?? '').split(';')[0].trim();
-	if (!ALLOWED_IMAGE_TYPES.includes(contentType)) {
-		return Response.json({ error: '画像形式が不正です（jpeg/png/webp/heicのいずれか）' }, { status: 400 });
-	}
-	const bytes = await request.arrayBuffer();
-	if (bytes.byteLength === 0) {
-		return Response.json({ error: '画像データが空です' }, { status: 400 });
-	}
-	if (bytes.byteLength > MAX_IMAGE_BYTES) {
-		return Response.json({ error: '画像サイズが大きすぎます（8MBまで）' }, { status: 400 });
-	}
-
-	const key = `comments/${id}/${crypto.randomUUID()}`;
-	if (existing.image_key) {
-		await env.COMMENT_IMAGES.delete(existing.image_key);
-	}
-	await env.COMMENT_IMAGES.put(key, bytes, { httpMetadata: { contentType } });
-
-	const now = new Date().toISOString();
-	await env.DB.prepare(
-		'UPDATE comments SET image_key = ?, image_content_type = ?, updated_by_id = ?, updated_by_name = ?, updated_at = ? WHERE comment_id = ?',
-	)
-		.bind(key, contentType, user.user_id, user.name, now, id)
-		.run();
-
-	const row = await env.DB.prepare('SELECT * FROM comments WHERE comment_id = ?').bind(id).first<CommentRow>();
-	return Response.json(toPublicComment(row!));
-}
-
-export async function deleteCommentImage(env: CommentsEnv, user: SessionUser, commentId: string): Promise<Response> {
-	const id = Number(commentId);
-	if (!Number.isInteger(id)) {
-		return Response.json({ error: 'comment_id が不正です' }, { status: 400 });
-	}
-	const existing = await env.DB.prepare('SELECT image_key FROM comments WHERE comment_id = ?')
-		.bind(id)
-		.first<{ image_key: string | null }>();
-	if (!existing) {
-		return Response.json({ error: '指定されたコメントが見つかりません' }, { status: 404 });
-	}
-	if (existing.image_key) {
-		await env.COMMENT_IMAGES.delete(existing.image_key);
-	}
-	const now = new Date().toISOString();
-	await env.DB.prepare(
-		'UPDATE comments SET image_key = NULL, image_content_type = NULL, updated_by_id = ?, updated_by_name = ?, updated_at = ? WHERE comment_id = ?',
-	)
-		.bind(user.user_id, user.name, now, id)
-		.run();
-
-	const row = await env.DB.prepare('SELECT * FROM comments WHERE comment_id = ?').bind(id).first<CommentRow>();
-	return Response.json(toPublicComment(row!));
-}
-
-export async function getCommentImage(env: CommentsEnv, commentId: string): Promise<Response> {
-	const id = Number(commentId);
-	if (!Number.isInteger(id)) {
-		return new Response('Not Found', { status: 404 });
-	}
-	const row = await env.DB.prepare('SELECT image_key, image_content_type FROM comments WHERE comment_id = ?')
-		.bind(id)
-		.first<{ image_key: string | null; image_content_type: string | null }>();
-	if (!row || !row.image_key) {
-		return new Response('Not Found', { status: 404 });
-	}
-	const object = await env.COMMENT_IMAGES.get(row.image_key);
-	if (!object) {
-		return new Response('Not Found', { status: 404 });
-	}
-	return new Response(object.body, {
-		headers: {
-			'content-type': row.image_content_type ?? 'application/octet-stream',
-			'cache-control': 'private, max-age=86400',
-		},
-	});
 }
