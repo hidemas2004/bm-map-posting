@@ -1224,7 +1224,7 @@ document.getElementById('new-term-submit').addEventListener('click', async () =>
 // 全ユーザー共通で、当日／前日以前の2色のみで色分けする（ユーザーごとの色分けはしない）。
 // 当日色は記録中のリアルタイム描画（startTracking）でも同じ色を使う。
 const TRACK_COLOR_TODAY = '#22c55e';
-const TRACK_COLOR_PAST = '#7c3aed';
+const TRACK_COLOR_PAST = '#fb923c';
 
 // UTCのISO日時からJST（この機能の利用地域、夏時間なし固定+9:00）のカレンダー日文字列を得る。
 function jstDateString(date) {
