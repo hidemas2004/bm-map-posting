@@ -1301,6 +1301,11 @@ function formatDuration(totalSeconds) {
 	return `${hours}時間${minutes}分`;
 }
 
+function formatDistance(totalMeters) {
+	if (totalMeters < 1000) return `${Math.round(totalMeters)}m`;
+	return `${(totalMeters / 1000).toFixed(1)}km`;
+}
+
 async function updateTrackDuration() {
 	const result = await fetchTracksForRange({ summary: true });
 	if (!result || result.error) {
@@ -1308,7 +1313,8 @@ async function updateTrackDuration() {
 		return;
 	}
 	const totalSeconds = result.tracks.reduce((sum, t) => sum + (t.duration_seconds ?? 0), 0);
-	trackQueryDuration.textContent = `記録累計時間: ${formatDuration(totalSeconds)}`;
+	const totalMeters = result.tracks.reduce((sum, t) => sum + (t.distance_meters ?? 0), 0);
+	trackQueryDuration.textContent = `記録累計時間: ${formatDuration(totalSeconds)} / 移動距離: ${formatDistance(totalMeters)}`;
 }
 
 trackQueryFromInput.addEventListener('change', updateTrackDuration);

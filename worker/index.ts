@@ -8,6 +8,7 @@ import { deleteTerm, type ResetEnv } from './reset';
 import { importPollingStations, listPollingStations, type PollingStationsEnv } from './polling_stations';
 import { createComment, deleteComment, listComments, updateComment, type CommentsEnv } from './comments';
 import { queryTracks, startTrack, stopTrack, submitTrackPoints, type GpsTracksEnv } from './gps_tracks';
+import { getHistorySummary, type HistorySummaryEnv } from './history_summary';
 import { buildConfigResponse, type ConfigEnv } from './config';
 
 export interface Env
@@ -21,6 +22,7 @@ export interface Env
 		PollingStationsEnv,
 		CommentsEnv,
 		GpsTracksEnv,
+		HistorySummaryEnv,
 		ConfigEnv {
 	ASSETS: { fetch(request: Request): Promise<Response> };
 }
@@ -67,6 +69,9 @@ export default {
 			}
 			if (url.pathname === '/api/activity-log/export' && request.method === 'GET') {
 				return exportActivityLogCsv(env, url.searchParams.get('term_id'));
+			}
+			if (url.pathname === '/api/history-summary' && request.method === 'GET') {
+				return getHistorySummary(env, url);
 			}
 			if (url.pathname === '/api/terms' && request.method === 'GET') {
 				return listTerms(env);

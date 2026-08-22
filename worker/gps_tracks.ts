@@ -8,6 +8,11 @@ import type { SessionUser } from './auth';
 
 const MAX_POINTS_PER_REQUEST = 200;
 
+// GPSは静止中でも数m単位でジッターし続けるため、区間距離がこの閾値未満の区間は移動と
+// みなさず積算しない（そのままだと立ち止まっている時間が長いほど実際には動いていない
+// 距離が積み上がってしまう）。
+const MIN_SEGMENT_METERS = 5;
+
 export interface GpsTracksEnv {
 	DB: D1Database;
 }
@@ -20,6 +25,7 @@ interface TrackRow {
 	started_at: string;
 	ended_at: string | null;
 	point_count: number;
+	distance_meters: number;
 }
 
 interface PointRow {
@@ -45,6 +51,18 @@ function validatePoint(p: unknown): { lat: number; lng: number; recorded_at: str
 		recorded_at: recordedAt,
 		accuracy: accuracyNum !== null && Number.isFinite(accuracyNum) ? accuracyNum : null,
 	};
+}
+
+const EARTH_RADIUS_METERS = 6371000;
+
+function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+	const toRad = (deg: number) => (deg * Math.PI) / 180;
+	const dLat = toRad(b.lat - a.lat);
+	const dLng = toRad(b.lng - a.lng);
+	const sinDLat = Math.sin(dLat / 2);
+	const sinDLng = Math.sin(dLng / 2);
+	const h = sinDLat * sinDLat + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sinDLng * sinDLng;
+	return 2 * EARTH_RADIUS_METERS * Math.asin(Math.sqrt(h));
 }
 
 export async function startTrack(env: GpsTracksEnv, user: SessionUser): Promise<Response> {
@@ -104,9 +122,34 @@ export async function submitTrackPoints(request: Request, env: GpsTracksEnv, use
 	if (points.some((p) => p === null)) {
 		return Response.json({ error: '座標データが不正です' }, { status: 400 });
 	}
+	// 距離はrecorded_at順に連続区間として積算するため、送信順に依存しないよう並べ替える。
+	const validPoints = (points as NonNullable<ReturnType<typeof validatePoint>>[]).sort((a, b) =>
+		a.recorded_at.localeCompare(b.recorded_at),
+	);
+
+	// このバッチ受信直前の最終座標を距離積算の起点にする（バッチをまたいで連続した経路として
+	// 距離を計算するため）。まだ座標点が無いtrackの場合はnullのままでよい（起点なしの最初の点は
+	// 距離0からスタート）。
+	const anchor = await env.DB.prepare(
+		'SELECT lat, lng FROM gps_track_points WHERE track_id = ? ORDER BY recorded_at DESC LIMIT 1',
+	)
+		.bind(trackId)
+		.first<{ lat: number; lng: number }>();
+
+	let distanceIncrement = 0;
+	let prev = anchor ?? null;
+	for (const p of validPoints) {
+		if (prev) {
+			const segment = haversineMeters(prev, p);
+			if (segment >= MIN_SEGMENT_METERS) {
+				distanceIncrement += segment;
+			}
+		}
+		prev = p;
+	}
 
 	const statements = [
-		...(points as NonNullable<ReturnType<typeof validatePoint>>[]).map((p) =>
+		...validPoints.map((p) =>
 			env.DB.prepare('INSERT INTO gps_track_points (track_id, lat, lng, recorded_at, accuracy) VALUES (?, ?, ?, ?, ?)').bind(
 				trackId,
 				p.lat,
@@ -115,11 +158,15 @@ export async function submitTrackPoints(request: Request, env: GpsTracksEnv, use
 				p.accuracy,
 			),
 		),
-		env.DB.prepare('UPDATE gps_tracks SET point_count = point_count + ? WHERE track_id = ?').bind(points.length, trackId),
+		env.DB.prepare('UPDATE gps_tracks SET point_count = point_count + ?, distance_meters = distance_meters + ? WHERE track_id = ?').bind(
+			validPoints.length,
+			distanceIncrement,
+			trackId,
+		),
 	];
 	await env.DB.batch(statements);
 
-	return Response.json({ inserted: points.length });
+	return Response.json({ inserted: validPoints.length });
 }
 
 export async function stopTrack(env: GpsTracksEnv, user: SessionUser, trackIdParam: string): Promise<Response> {
@@ -213,6 +260,7 @@ export async function queryTracks(env: GpsTracksEnv, user: SessionUser, url: URL
 					started_at: t.started_at,
 					ended_at: t.ended_at,
 					duration_seconds: durationSeconds(t.started_at, effectiveEndedAt),
+					distance_meters: t.distance_meters,
 				};
 			}),
 		});
@@ -245,6 +293,7 @@ export async function queryTracks(env: GpsTracksEnv, user: SessionUser, url: URL
 				started_at: t.started_at,
 				ended_at: t.ended_at,
 				duration_seconds: durationSeconds(t.started_at, effectiveEndedAt),
+				distance_meters: t.distance_meters,
 				points: pts.map((p) => ({ lat: p.lat, lng: p.lng, recorded_at: p.recorded_at, accuracy: p.accuracy })),
 			};
 		}),

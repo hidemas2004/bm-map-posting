@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ポスティング管理 履歴集計</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="list-page">
+<header id="header">
+  <div class="header-row">
+    <h1>履歴集計</h1>
+    <div class="header-actions">
+      <a href="/" id="back-link">地図に戻る</a>
+    </div>
+  </div>
+</header>
+<main class="list-main">
+  <div class="list-toolbar">
+    <label>期間:
+      <input type="date" id="summary-from">
+      〜
+      <input type="date" id="summary-to">
+    </label>
+  </div>
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr><th>メンバー</th><th>配布枚数</th><th>軌跡時間</th><th>移動距離</th></tr>
+      </thead>
+      <tbody id="summary-tbody"></tbody>
+      <tfoot id="summary-tfoot"></tfoot>
+    </table>
+  </div>
+</main>
+<script src="/history-summary.js"></script>
+</body>
+</html>
