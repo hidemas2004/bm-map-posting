@@ -242,7 +242,21 @@ body.list-page #header a#back-link {
   font-size: 13px; cursor: pointer; white-space: nowrap;
 }
 
+/* 投票所チェックボックスとコメントフィルタを1つのflexアイテムとしてまとめ、
+   親(.header-row-controls)の折り返し時に「投票所」だけが行末に取り残されないようにする
+   （折り返すときはこのグループごと次の行へ送られる）。 */
+.header-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 #comment-filter-checkboxes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* スマホ幅では、ターム・フィルタ（左詰め）と現在地・軌跡記録・メニュー（右詰め、従来通り
+   .header-actionsでまとめて右寄せ）を1行目に収め、チェックボックス群は常に2行目へ送る。
+   DOM順は変えずorderだけをこの幅で上書きすることで、PC表示（メディアクエリ対象外）は
+   従来の見た目（1行に収まればチェックボックスと.header-actionsが並ぶ）のまま変えない。
+   flex-basis:100%は、flexアイテムが行の全幅を要求することで同じ行に他要素が並べず
+   必ず改行させる、という定番の強制改行手法。 */
+@media (max-width: 700px) {
+  .header-filters { flex-basis: 100%; order: 10; }
+}
 
 /* 地図コメントピン（issue#24）。投票所ピンと同じしずく型だが、背景色はカテゴリごとに
    異なる（JS側でinline style指定）ため、投票所ピンと見分けやすいようカテゴリ別の記号
