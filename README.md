@@ -69,6 +69,7 @@ npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0007_comments.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0008_add_polling_station_uncertain.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0009_gps_tracks.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0010_gps_tracks_term_id.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=regions/14213-yamato/areas.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=seed/users.sql
 ```
@@ -181,7 +182,22 @@ term/areaに紐付かない独立データ（`comments`テーブル、投票所�
 - 軌跡照会の閲覧権限: 一般ユーザーは自分の軌跡のみ、管理者は全ユーザー分（またはユーザーを
   選んで）閲覧できる（`worker/gps_tracks.ts`の`queryTracks`でサーバー側が強制する。フロントの
   ユーザー選択欄は管理者にのみ表示するだけで、権限の実体はサーバー側判定）。
-- データの保持期間は無期限（自動削除の仕組みは無い。2026-08時点）。
+- `gps_tracks.term_id`（`migrations/0010_gps_tracks_term_id.sql`）で記録開始時点の進行中タームに
+  紐づく。クライアントの選択タームではなく`startTrack`がサーバー側で`status = '進行中'`のタームを
+  判定して設定するため、進行中タームが無い状態で記録した場合は`NULL`のまま。タームが（新タームの
+  開始で）完了扱いになっただけでは軌跡データは削除されないが、データクリア画面での明示的な
+  ターム削除（`worker/reset.ts`の`deleteTerm`）では該当ターム分の軌跡データも削除される。
+- 記録終了時刻（`ended_at`）が未確定のまま孤立したtrack（タブを閉じる等でSTOPされなかった場合）
+  は、次回同ユーザーがSTARTした際に確定するが、その時刻は「次回start時刻」ではなく
+  「そのtrackの最終`recorded_at`」を使う。軌跡照会は各trackの記録時間（`duration_seconds`、
+  `ended_at`未確定時は同様に最終`recorded_at`にフォールバックして計算）を返し、フロントは
+  選択期間の累計時間をモーダルに表示する（日付・対象ユーザー変更のたびに再計算）。この
+  再計算では`GET /api/gps-tracks?...&summary=1`を使い、座標点（`points`）を含まない軽量な
+  レスポンスを取得する。長期間・多人数分の座標点を毎回まるごと返すと1タームで数十万点規模に
+  なり得るため（想定利用規模での試算では1タームあたり数十MB相当）、座標点が実際に必要な
+  「表示」ボタン押下時（`summary`無し）とは経路を分けている。
+- データの保持期間は無期限（自動削除の仕組みは無い。上記のデータクリア画面での明示的な
+  ターム削除を除く。2026-08時点）。
 
 ## 行政区域データの追加・基本単位区単位への格上げ手順
 

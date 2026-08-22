@@ -62,15 +62,19 @@
 <div id="track-query-modal" class="modal-overlay">
   <div class="modal-panel">
     <div class="title">軌跡照会</div>
-    <label class="modal-field">開始日
-      <input type="date" id="track-query-from">
-    </label>
-    <label class="modal-field">終了日
-      <input type="date" id="track-query-to">
-    </label>
+    <div class="modal-field-row">
+      <label class="modal-field-inline">開始
+        <input type="date" id="track-query-from">
+      </label>
+      <span class="modal-field-sep">〜</span>
+      <label class="modal-field-inline">終了
+        <input type="date" id="track-query-to">
+      </label>
+    </div>
     <label class="modal-field" id="track-query-user-field" style="display:none;">対象ユーザー
       <select id="track-query-user-select"></select>
     </label>
+    <p class="hint" id="track-query-duration"></p>
     <p class="error" id="track-query-error"></p>
     <div class="actions">
       <button type="button" id="track-query-close">閉じる</button>

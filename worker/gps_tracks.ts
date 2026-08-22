@@ -16,6 +16,7 @@ interface TrackRow {
 	track_id: number;
 	user_id: string;
 	user_name: string;
+	term_id: number | null;
 	started_at: string;
 	ended_at: string | null;
 	point_count: number;
@@ -50,15 +51,26 @@ export async function startTrack(env: GpsTracksEnv, user: SessionUser): Promise<
 	const now = new Date().toISOString();
 
 	// 前回の記録がタブの異常終了等でstopされないまま残っている場合、孤立させないよう
-	// 今回のstart時刻で確定させてから新規trackを作成する。
-	await env.DB.prepare('UPDATE gps_tracks SET ended_at = ? WHERE user_id = ? AND ended_at IS NULL')
-		.bind(now, user.user_id)
+	// 確定させてから新規trackを作成する。終了時刻は「今回のstart時刻」ではなく、実際に
+	// 最後に記録できていた座標点の時刻を使う（記録点が無ければstarted_atにフォールバック）。
+	// 今回のstart時刻を使うと、タブを閉じてから次にSTARTを押すまでの時間がそのまま
+	// 記録時間に混入してしまうため。
+	await env.DB.prepare(
+		`UPDATE gps_tracks
+		 SET ended_at = COALESCE((SELECT MAX(recorded_at) FROM gps_track_points WHERE track_id = gps_tracks.track_id), started_at)
+		 WHERE user_id = ? AND ended_at IS NULL`,
+	)
+		.bind(user.user_id)
 		.run();
 
+	// 記録開始時点で進行中のタームにデータを紐づける。クライアント側で選択中のタームとは
+	// 独立に、サーバー側で権威的に判定する。進行中タームが無ければNULLのまま記録を許可する。
+	const activeTerm = await env.DB.prepare("SELECT term_id FROM terms WHERE status = '進行中'").first<{ term_id: number }>();
+
 	const result = await env.DB.prepare(
-		'INSERT INTO gps_tracks (user_id, user_name, started_at, ended_at, point_count) VALUES (?, ?, ?, NULL, 0)',
+		'INSERT INTO gps_tracks (user_id, user_name, term_id, started_at, ended_at, point_count) VALUES (?, ?, ?, ?, NULL, 0)',
 	)
-		.bind(user.user_id, user.name, now)
+		.bind(user.user_id, user.name, activeTerm?.term_id ?? null, now)
 		.run();
 
 	return Response.json({ track_id: result.meta.last_row_id, started_at: now });
@@ -128,12 +140,19 @@ export async function stopTrack(env: GpsTracksEnv, user: SessionUser, trackIdPar
 	return Response.json({ track_id: trackId, ended_at: now });
 }
 
+function durationSeconds(startedAt: string, effectiveEndedAt: string): number {
+	return Math.max(0, (new Date(effectiveEndedAt).getTime() - new Date(startedAt).getTime()) / 1000);
+}
+
 export async function queryTracks(env: GpsTracksEnv, user: SessionUser, url: URL): Promise<Response> {
 	const from = url.searchParams.get('from');
 	const to = url.searchParams.get('to');
 	if (!from || !to) {
 		return Response.json({ error: 'from・to を指定してください' }, { status: 400 });
 	}
+	// summary=1: 累積時間表示など、座標点そのものが不要な用途向けの軽量モード。
+	// gps_track_pointsの全件取得を行わず、ended_at未確定分だけ最終recorded_atを集計取得する。
+	const summary = url.searchParams.get('summary') === '1';
 
 	const requestedUserId = url.searchParams.get('user_id');
 	// 一般ユーザーはuser_id指定に関わらず常に本人のみ。管理者のみ他ユーザー指定・全員表示が可能。
@@ -166,6 +185,39 @@ export async function queryTracks(env: GpsTracksEnv, user: SessionUser, url: URL
 		return Response.json({ tracks: [] });
 	}
 
+	if (summary) {
+		// ended_atが未確定のtrackだけ、そのtrack_idに絞って最終recorded_atを集計取得する
+		// （idx_gps_track_points_track (track_id, recorded_at) によりtrack単位のインデックス
+		// 末尾参照で済み、座標点数に関わらず軽量）。
+		const pendingTrackIds = trackRows.filter((t) => !t.ended_at).map((t) => t.track_id);
+		const lastRecordedByTrack = new Map<number, string>();
+		if (pendingTrackIds.length > 0) {
+			const placeholders = pendingTrackIds.map(() => '?').join(',');
+			const lastPoints = await env.DB.prepare(
+				`SELECT track_id, MAX(recorded_at) AS last_recorded_at FROM gps_track_points WHERE track_id IN (${placeholders}) GROUP BY track_id`,
+			)
+				.bind(...pendingTrackIds)
+				.all<{ track_id: number; last_recorded_at: string }>();
+			for (const row of lastPoints.results) {
+				lastRecordedByTrack.set(row.track_id, row.last_recorded_at);
+			}
+		}
+		return Response.json({
+			tracks: trackRows.map((t) => {
+				const effectiveEndedAt = t.ended_at ?? lastRecordedByTrack.get(t.track_id) ?? t.started_at;
+				return {
+					track_id: t.track_id,
+					user_id: t.user_id,
+					user_name: t.user_name,
+					term_id: t.term_id,
+					started_at: t.started_at,
+					ended_at: t.ended_at,
+					duration_seconds: durationSeconds(t.started_at, effectiveEndedAt),
+				};
+			}),
+		});
+	}
+
 	const placeholders = trackRows.map(() => '?').join(',');
 	const points = await env.DB.prepare(
 		`SELECT track_id, lat, lng, recorded_at, accuracy FROM gps_track_points WHERE track_id IN (${placeholders}) ORDER BY track_id, recorded_at`,
@@ -180,13 +232,21 @@ export async function queryTracks(env: GpsTracksEnv, user: SessionUser, url: URL
 	}
 
 	return Response.json({
-		tracks: trackRows.map((t) => ({
-			track_id: t.track_id,
-			user_id: t.user_id,
-			user_name: t.user_name,
-			started_at: t.started_at,
-			ended_at: t.ended_at,
-			points: (pointsByTrack.get(t.track_id) ?? []).map((p) => ({ lat: p.lat, lng: p.lng, recorded_at: p.recorded_at, accuracy: p.accuracy })),
-		})),
+		tracks: trackRows.map((t) => {
+			const pts = pointsByTrack.get(t.track_id) ?? [];
+			// ended_atが未確定（記録中、または何らかの理由で孤立確定前）の場合は、最終記録点の
+			// 時刻をフォールバックとして使う（startTrackの孤立トラック確定と同じ考え方）。
+			const effectiveEndedAt = t.ended_at ?? pts[pts.length - 1]?.recorded_at ?? t.started_at;
+			return {
+				track_id: t.track_id,
+				user_id: t.user_id,
+				user_name: t.user_name,
+				term_id: t.term_id,
+				started_at: t.started_at,
+				ended_at: t.ended_at,
+				duration_seconds: durationSeconds(t.started_at, effectiveEndedAt),
+				points: pts.map((p) => ({ lat: p.lat, lng: p.lng, recorded_at: p.recorded_at, accuracy: p.accuracy })),
+			};
+		}),
 	});
 }

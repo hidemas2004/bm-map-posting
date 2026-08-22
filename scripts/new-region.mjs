@@ -295,6 +295,7 @@ async function main() {
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0007_comments.sql']);
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0008_add_polling_station_uncertain.sql']);
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0009_gps_tracks.sql']);
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0010_gps_tracks_term_id.sql']);
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', `--file=${path.relative(REPO_ROOT, areasSqlPath)}`]);
 		const chomeAreaIdSqlPath = path.join(dir, 'chome_area_id.sql');
 		if (meta.hasChomeBoundary && existsSync(chomeAreaIdSqlPath)) {

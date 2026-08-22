@@ -190,6 +190,10 @@ body.list-page #header a#back-link {
 
 .modal-field select { display: block; width: 100%; padding: 6px; font-size: 14px; margin-top: 4px; }
 .modal-field input[type=date] { display: block; width: 100%; padding: 6px; font-size: 14px; margin-top: 4px; }
+.modal-field-row { display: flex; align-items: flex-end; gap: 8px; margin-bottom: 8px; }
+.modal-field-row .modal-field-inline { flex: 1 1 0; min-width: 0; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+.modal-field-row input[type=date] { width: 100%; min-width: 0; padding: 5px 4px; font-size: 13px; }
+.modal-field-sep { padding-bottom: 8px; color: #6b7280; }
 .modal-panel .actions button#track-query-show { background: #2563eb; color: #fff; }
 .modal-panel .actions button#track-query-clear,
 .modal-panel .actions button#track-query-close { background: #e5e7eb; color: #111827; }

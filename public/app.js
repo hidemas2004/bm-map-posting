@@ -95,16 +95,22 @@ function areaTitle(row) {
 
 // ---- 地図初期化 ----
 
-const map = L.map('map').setView(MAP_INITIAL_CENTER, MAP_INITIAL_ZOOM);
+// バーガーメニュー内リンク（別ページ）から戻った場合、保存済みのズーム・中心位置があれば
+// それを初期表示に使う（無ければ地域設定のデフォルト）。
+const map = L.map('map').setView(savedUiState?.mapCenter ?? MAP_INITIAL_CENTER, savedUiState?.mapZoom ?? MAP_INITIAL_ZOOM);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 	attribution: '&copy; OpenStreetMap contributors',
 }).addTo(map);
+map.on('moveend', () => saveUiState());
 
 let geoLayer = null;
 let chomeLayer = null;
 let pollingStationLayer = null;
 const commentLayerGroup = L.layerGroup();
 const trackQueryLayerGroup = L.layerGroup();
+// 記録終了直後、地図に残しておく直描きpolyline置き場。記録中はmapに直接addToし、
+// STOP時にここへ移し替える（軌跡照会の「消去」でまとめて消せるようにするため）。
+const liveTrackLayerGroup = L.layerGroup();
 
 function weightForZoom(baseWeight) {
 	const zoomDiff = map.getZoom() - MAP_INITIAL_ZOOM;
@@ -256,10 +262,16 @@ document.getElementById('assignee-filter').addEventListener('change', (e) => {
 	updateHeaderStats();
 });
 
+// 区画数が数千件規模の地域があり、デフォルトのSVGレンダラーだと区画ごとに個別のDOM要素
+// （<path>）を作るため初期描画がメインスレッドを長時間占有し操作不能になる。1枚のcanvasに
+// まとめて描画するCanvasレンダラーを共有で使い、これを避ける。
+const boundaryRenderer = L.canvas();
+
 async function loadBoundary() {
 	const res = await fetch(BOUNDARY_GEOJSON_PATH);
 	const geojson = await res.json();
 	geoLayer = L.geoJSON(geojson, {
+		renderer: boundaryRenderer,
 		style: (feature) => styleForArea(feature.properties.area_id),
 		onEachFeature: (feature, layer) => {
 			layer.on('click', () => openPopup(layer));
@@ -272,6 +284,7 @@ async function loadChomeBoundary() {
 	const res = await fetch(CHOME_BOUNDARY_GEOJSON_PATH);
 	const geojson = await res.json();
 	chomeLayer = L.geoJSON(geojson, {
+		renderer: boundaryRenderer,
 		interactive: false,
 		style: () => ({
 			color: CHOME_BOUNDARY_COLOR,
@@ -320,6 +333,12 @@ function saveUiState() {
 			pollingStationVisible: document.getElementById('polling-station-toggle').checked,
 			commentFilterCategories: Array.from(state.commentFilterCategories),
 			gpsActive: state.watchId !== null,
+			trackQueryVisible: map.hasLayer(trackQueryLayerGroup),
+			trackQueryFrom: trackQueryFromInput.value,
+			trackQueryTo: trackQueryToInput.value,
+			trackQueryUserId: trackQueryUserSelect.value,
+			mapCenter: map.getCenter(),
+			mapZoom: map.getZoom(),
 		}),
 	);
 }
@@ -1010,7 +1029,7 @@ async function startTracking() {
 
 	state.trackId = data.track_id;
 	state.trackBuffer = [];
-	state.trackPolyline = L.polyline([], { color: '#dc2626', weight: 4 }).addTo(map);
+	state.trackPolyline = L.polyline([], { color: TRACK_COLOR_TODAY, weight: 4 }).addTo(map);
 	trackRecordButton.classList.add('active');
 	gpsButton.disabled = true;
 
@@ -1077,6 +1096,12 @@ async function stopTracking() {
 	if (state.gpsMarker) {
 		map.removeLayer(state.gpsMarker);
 		state.gpsMarker = null;
+	}
+	if (state.trackPolyline) {
+		map.removeLayer(state.trackPolyline);
+		liveTrackLayerGroup.addLayer(state.trackPolyline);
+		if (!map.hasLayer(liveTrackLayerGroup)) liveTrackLayerGroup.addTo(map);
+		state.trackPolyline = null;
 	}
 	trackRecordButton.classList.remove('active');
 	gpsButton.disabled = false;
@@ -1196,12 +1221,18 @@ document.getElementById('new-term-submit').addEventListener('click', async () =>
 // （権限の判定はサーバー側 GET /api/gps-tracks 内で行っており、フロントのユーザー選択欄は
 // 管理者にのみ表示する）。
 
-const TRACK_COLOR_PALETTE = ['#2563eb', '#dc2626', '#16a34a', '#7c3aed', '#f59e0b', '#0d9488', '#db2777', '#4b5563'];
+// 全ユーザー共通で、当日／前日以前の2色のみで色分けする（ユーザーごとの色分けはしない）。
+// 当日色は記録中のリアルタイム描画（startTracking）でも同じ色を使う。
+const TRACK_COLOR_TODAY = '#22c55e';
+const TRACK_COLOR_PAST = '#7c3aed';
 
-function colorForUser(userId) {
-	let hash = 0;
-	for (const ch of String(userId)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-	return TRACK_COLOR_PALETTE[hash % TRACK_COLOR_PALETTE.length];
+// UTCのISO日時からJST（この機能の利用地域、夏時間なし固定+9:00）のカレンダー日文字列を得る。
+function jstDateString(date) {
+	return new Date(date.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function colorForTrack(startedAt) {
+	return jstDateString(new Date(startedAt)) === jstDateString(new Date()) ? TRACK_COLOR_TODAY : TRACK_COLOR_PAST;
 }
 
 const trackQueryModal = document.getElementById('track-query-modal');
@@ -1209,15 +1240,12 @@ const trackQueryFromInput = document.getElementById('track-query-from');
 const trackQueryToInput = document.getElementById('track-query-to');
 const trackQueryUserField = document.getElementById('track-query-user-field');
 const trackQueryUserSelect = document.getElementById('track-query-user-select');
+const trackQueryDuration = document.getElementById('track-query-duration');
 const trackQueryError = document.getElementById('track-query-error');
 
-function openTrackQueryModal() {
-	trackQueryError.textContent = '';
-	if (!trackQueryFromInput.value) {
-		const today = new Date().toISOString().slice(0, 10);
-		trackQueryFromInput.value = today;
-		trackQueryToInput.value = today;
-	}
+// 対象ユーザーselectの選択肢を構築する。モーダルを開くときと、保存済み状態からの
+// 軌跡表示復元（init()）の両方から呼ぶ。
+function populateTrackQueryUserSelect() {
 	if (session.user.role === '管理者') {
 		trackQueryUserField.style.display = 'block';
 		trackQueryUserSelect.innerHTML =
@@ -1225,12 +1253,67 @@ function openTrackQueryModal() {
 	} else {
 		trackQueryUserField.style.display = 'none';
 	}
+}
+
+function openTrackQueryModal() {
+	trackQueryError.textContent = '';
+	if (!trackQueryFromInput.value) {
+		const today = new Date().toISOString().slice(0, 10);
+		trackQueryFromInput.value = currentTerm()?.start_date ?? today;
+		trackQueryToInput.value = today;
+	}
+	populateTrackQueryUserSelect();
 	trackQueryModal.classList.add('show');
+	updateTrackDuration();
 }
 
 function closeTrackQueryModal() {
 	trackQueryModal.classList.remove('show');
 }
+
+// from/toとuser選択に応じてtrack一覧を取得する共通処理。「表示」ボタンでの地図描画と、
+// 日付/ユーザー変更のたびの累積時間再計算の両方から呼ばれる。summary:trueのときは座標点を
+// 含まない軽量レスポンスを要求する（累積時間の計算にのみ使う場合、期間全体の座標点を
+// 毎回まるごと取得すると参加人数・記録期間次第でレスポンスが巨大になるため）。
+async function fetchTracksForRange({ summary = false } = {}) {
+	const from = trackQueryFromInput.value;
+	const to = trackQueryToInput.value;
+	if (!from || !to) return null;
+
+	const params = new URLSearchParams({ from, to });
+	if (session.user.role === '管理者' && trackQueryUserSelect.value) {
+		params.set('user_id', trackQueryUserSelect.value);
+	}
+	if (summary) params.set('summary', '1');
+	const res = await apiFetch(`/api/gps-tracks?${params.toString()}`);
+	const data = await res.json();
+	if (!res.ok) {
+		return { error: data.error ?? '照会に失敗しました' };
+	}
+	return { tracks: data.tracks };
+}
+
+function formatDuration(totalSeconds) {
+	const totalMinutes = Math.round(totalSeconds / 60);
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+	if (hours === 0) return `${minutes}分`;
+	return `${hours}時間${minutes}分`;
+}
+
+async function updateTrackDuration() {
+	const result = await fetchTracksForRange({ summary: true });
+	if (!result || result.error) {
+		trackQueryDuration.textContent = '';
+		return;
+	}
+	const totalSeconds = result.tracks.reduce((sum, t) => sum + (t.duration_seconds ?? 0), 0);
+	trackQueryDuration.textContent = `記録累計時間: ${formatDuration(totalSeconds)}`;
+}
+
+trackQueryFromInput.addEventListener('change', updateTrackDuration);
+trackQueryToInput.addEventListener('change', updateTrackDuration);
+trackQueryUserSelect.addEventListener('change', updateTrackDuration);
 
 document.getElementById('track-query-button').addEventListener('click', () => {
 	menuPanel.classList.remove('show');
@@ -1238,37 +1321,14 @@ document.getElementById('track-query-button').addEventListener('click', () => {
 });
 document.getElementById('track-query-close').addEventListener('click', closeTrackQueryModal);
 
-document.getElementById('track-query-clear').addEventListener('click', () => {
+// 軌跡照会の結果をtrackQueryLayerGroupへ描画する。「表示」ボタン押下時と、メニュー内リンクへの
+// 遷移から地図に戻った際の復元（init()）の両方から呼ばれる。
+function renderTrackResults(tracks) {
 	trackQueryLayerGroup.clearLayers();
-	if (map.hasLayer(trackQueryLayerGroup)) map.removeLayer(trackQueryLayerGroup);
-	closeTrackQueryModal();
-});
-
-document.getElementById('track-query-show').addEventListener('click', async () => {
-	const from = trackQueryFromInput.value;
-	const to = trackQueryToInput.value;
-	if (!from || !to) {
-		trackQueryError.textContent = '開始日・終了日を指定してください';
-		return;
-	}
-	trackQueryError.textContent = '';
-
-	const params = new URLSearchParams({ from, to });
-	if (session.user.role === '管理者' && trackQueryUserSelect.value) {
-		params.set('user_id', trackQueryUserSelect.value);
-	}
-	const res = await apiFetch(`/api/gps-tracks?${params.toString()}`);
-	const data = await res.json();
-	if (!res.ok) {
-		trackQueryError.textContent = data.error ?? '照会に失敗しました';
-		return;
-	}
-
-	trackQueryLayerGroup.clearLayers();
-	for (const track of data.tracks) {
+	for (const track of tracks) {
 		if (track.points.length === 0) continue;
 		const latlngs = track.points.map((p) => [p.lat, p.lng]);
-		const polyline = L.polyline(latlngs, { color: colorForUser(track.user_id), weight: 4 });
+		const polyline = L.polyline(latlngs, { color: colorForTrack(track.started_at), weight: 4 });
 		const popup = document.createElement('div');
 		popup.className = 'popup-content';
 		popup.innerHTML = `
@@ -1280,6 +1340,32 @@ document.getElementById('track-query-show').addEventListener('click', async () =
 		trackQueryLayerGroup.addLayer(polyline);
 	}
 	if (!map.hasLayer(trackQueryLayerGroup)) trackQueryLayerGroup.addTo(map);
+}
+
+document.getElementById('track-query-clear').addEventListener('click', () => {
+	trackQueryLayerGroup.clearLayers();
+	if (map.hasLayer(trackQueryLayerGroup)) map.removeLayer(trackQueryLayerGroup);
+	liveTrackLayerGroup.clearLayers();
+	if (map.hasLayer(liveTrackLayerGroup)) map.removeLayer(liveTrackLayerGroup);
+	saveUiState();
+	closeTrackQueryModal();
+});
+
+document.getElementById('track-query-show').addEventListener('click', async () => {
+	if (!trackQueryFromInput.value || !trackQueryToInput.value) {
+		trackQueryError.textContent = '開始日・終了日を指定してください';
+		return;
+	}
+	trackQueryError.textContent = '';
+
+	const result = await fetchTracksForRange();
+	if (result.error) {
+		trackQueryError.textContent = result.error;
+		return;
+	}
+
+	renderTrackResults(result.tracks);
+	saveUiState();
 	closeTrackQueryModal();
 });
 
@@ -1290,6 +1376,7 @@ async function init() {
 	state.activeUsers = await usersRes.json();
 	populateAssigneeFilterSelect();
 	populateCommentFilterCheckboxes();
+	restoreTrackQueryDisplay();
 	await loadBoundary();
 	if (typeof CHOME_BOUNDARY_GEOJSON_PATH !== 'undefined') {
 		await loadChomeBoundary();
@@ -1305,6 +1392,21 @@ async function init() {
 
 	if (savedUiState?.gpsActive) {
 		startGpsWatch();
+	}
+}
+
+// 軌跡照会で「表示」した状態は、バーガーメニュー内リンクへの遷移から地図に戻った際にも
+// 維持する（フルページ遷移でJS状態は失われるため、保存済みパラメータで取得し直す）。
+// init()の他の逐次処理を待たせないよう、独立して（awaitせず）呼び出す。
+async function restoreTrackQueryDisplay() {
+	if (!savedUiState?.trackQueryVisible) return;
+	trackQueryFromInput.value = savedUiState.trackQueryFrom ?? '';
+	trackQueryToInput.value = savedUiState.trackQueryTo ?? '';
+	populateTrackQueryUserSelect();
+	trackQueryUserSelect.value = savedUiState.trackQueryUserId ?? '';
+	const result = await fetchTracksForRange();
+	if (result && !result.error) {
+		renderTrackResults(result.tracks);
 	}
 }
 

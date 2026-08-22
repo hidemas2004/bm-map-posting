@@ -29,8 +29,10 @@ const FROZEN_COL_COUNT = 2; // 町丁目・区画を列固定
 /**
  * 先頭N列を横スクロール時も固定表示する。テーブルは列ごとに幅が揃う（table auto layout）ため、
  * ヘッダ行のセル幅を測定すればそのままボディ側の同じ列にも使い回せる。
+ * ヘッダーからのオフセット計算（重い処理ではないが、行ごとに再計算する必要はない）と、
+ * 個々の行への適用を分離し、バッチ描画の各回では後者だけを新規行に対して行う。
  */
-function applyStickyColumns(table, frozenCount) {
+function computeStickyColumnLefts(table, frozenCount) {
 	const headerCells = table.querySelectorAll('thead tr th');
 	const lefts = [];
 	let cumulativeLeft = 0;
@@ -38,7 +40,11 @@ function applyStickyColumns(table, frozenCount) {
 		lefts.push(cumulativeLeft);
 		cumulativeLeft += headerCells[i].getBoundingClientRect().width;
 	}
-	for (const row of table.querySelectorAll('tr')) {
+	return lefts;
+}
+
+function applyStickyColumnsToRows(rows, lefts, frozenCount) {
+	for (const row of rows) {
 		const cells = row.children;
 		for (let i = 0; i < frozenCount && i < cells.length; i++) {
 			cells[i].classList.add('sticky-col');
@@ -73,6 +79,12 @@ function buildDataRow(area) {
 	return tr;
 }
 
+// 地域数が数千件規模になり得るため、一度に全行をDOM構築すると初期表示が遅く、
+// sticky-colの要素数も多くなりスクロールが重くなる。スクロールに応じてバッチで
+// 追加描画する（無限スクロール方式）。
+const AREAS_RENDER_BATCH_SIZE = 200;
+const AREAS_RENDER_THRESHOLD_PX = 300;
+
 async function loadAreas() {
 	const res = await apiFetch('/api/areas/with-terms');
 	const { areas } = await res.json();
@@ -83,6 +95,11 @@ async function loadAreas() {
 
 	const tbody = document.getElementById('areas-tbody');
 	tbody.innerHTML = '';
+	document.getElementById('area-count').textContent = `${areas.length}件`;
+
+	const wrap = document.querySelector('.data-table-wrap');
+	wrap.onscroll = null;
+
 	if (areas.length === 0) {
 		const tr = document.createElement('tr');
 		const td = document.createElement('td');
@@ -91,14 +108,34 @@ async function loadAreas() {
 		td.textContent = '地域データがありません';
 		tr.appendChild(td);
 		tbody.appendChild(tr);
-	} else {
-		for (const area of areas) {
-			tbody.appendChild(buildDataRow(area));
-		}
+		return;
 	}
 
-	document.getElementById('area-count').textContent = `${areas.length}件`;
-	applyStickyColumns(document.querySelector('.data-table'), FROZEN_COL_COUNT);
+	const table = document.querySelector('.data-table');
+	const stickyLefts = computeStickyColumnLefts(table, FROZEN_COL_COUNT);
+	let renderedCount = 0;
+
+	function renderNextBatch() {
+		if (renderedCount >= areas.length) return;
+		const end = Math.min(renderedCount + AREAS_RENDER_BATCH_SIZE, areas.length);
+		const fragment = document.createDocumentFragment();
+		const newRows = [];
+		for (let i = renderedCount; i < end; i++) {
+			const row = buildDataRow(areas[i]);
+			fragment.appendChild(row);
+			newRows.push(row);
+		}
+		tbody.appendChild(fragment);
+		applyStickyColumnsToRows(newRows, stickyLefts, FROZEN_COL_COUNT);
+		renderedCount = end;
+	}
+
+	renderNextBatch();
+	wrap.onscroll = () => {
+		if (wrap.scrollTop + wrap.clientHeight >= wrap.scrollHeight - AREAS_RENDER_THRESHOLD_PX) {
+			renderNextBatch();
+		}
+	};
 }
 
 document.getElementById('csv-download-button').addEventListener('click', async () => {
