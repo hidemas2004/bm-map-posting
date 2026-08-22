@@ -7,6 +7,7 @@ import { exportActivityLogCsv, listActivityLog, type ActivityLogEnv } from './ac
 import { deleteTerm, type ResetEnv } from './reset';
 import { importPollingStations, listPollingStations, type PollingStationsEnv } from './polling_stations';
 import { createComment, deleteComment, listComments, updateComment, type CommentsEnv } from './comments';
+import { queryTracks, startTrack, stopTrack, submitTrackPoints, type GpsTracksEnv } from './gps_tracks';
 import { buildConfigResponse, type ConfigEnv } from './config';
 
 export interface Env
@@ -19,6 +20,7 @@ export interface Env
 		ResetEnv,
 		PollingStationsEnv,
 		CommentsEnv,
+		GpsTracksEnv,
 		ConfigEnv {
 	ASSETS: { fetch(request: Request): Promise<Response> };
 }
@@ -134,6 +136,22 @@ export default {
 			}
 			if (url.pathname === '/api/record' && request.method === 'POST') {
 				return recordDistribution(request, env, user);
+			}
+			// GPS移動軌跡機能。/api/gps-tracks/:track_id/points と /:track_id/stop の
+			// パスパラメータ抽出のみ、/api/comments/:id と同様に正規表現マッチを使う。
+			const trackPointsMatch = url.pathname.match(/^\/api\/gps-tracks\/(\d+)\/points$/);
+			const trackStopMatch = url.pathname.match(/^\/api\/gps-tracks\/(\d+)\/stop$/);
+			if (url.pathname === '/api/gps-tracks/start' && request.method === 'POST') {
+				return startTrack(env, user);
+			}
+			if (trackPointsMatch && request.method === 'POST') {
+				return submitTrackPoints(request, env, user, trackPointsMatch[1]);
+			}
+			if (trackStopMatch && request.method === 'POST') {
+				return stopTrack(env, user, trackStopMatch[1]);
+			}
+			if (url.pathname === '/api/gps-tracks' && request.method === 'GET') {
+				return queryTracks(env, user, url);
 			}
 			if (url.pathname === '/api/assignee' && request.method === 'POST') {
 				return setAssignee(request, env);

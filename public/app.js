@@ -8,6 +8,20 @@ if (!sessionRaw) {
 }
 const session = JSON.parse(sessionRaw);
 
+// ヘッダのチェックボックス（投票所・コメントフィルタ）・現在地ボタンの表示状態は、
+// バーガーメニュー内リンク（履歴一覧等）へ遷移して戻ってきた際もページがリロードされ
+// JSの状態が失われるため、sessionStorageに保存して復元する。
+const UI_STATE_KEY = 'bm_posting_ui_state';
+function loadSavedUiState() {
+	try {
+		const raw = sessionStorage.getItem(UI_STATE_KEY);
+		return raw ? JSON.parse(raw) : null;
+	} catch {
+		return null;
+	}
+}
+const savedUiState = loadSavedUiState();
+
 const state = {
 	terms: [],
 	currentTermId: null,
@@ -18,7 +32,14 @@ const state = {
 	gpsMarker: null,
 	assigneeFilter: '', // ''=全体表示、それ以外はuser_id
 	comments: new Map(), // comment_id -> comment（issue#24。全ターム共通データなのでterm切替の影響を受けない）
-	commentFilterCategories: new Set(), // 表示中のカテゴリ集合（空＝表示しない）
+	// 表示中のカテゴリ集合（空＝表示しない）。デフォルトは全カテゴリ表示、保存済み状態があればそれを復元する。
+	commentFilterCategories: new Set(savedUiState?.commentFilterCategories ?? COMMENT_CATEGORIES.map((c) => c.value)),
+	trackId: null, // 記録中のtrack_id（nullなら未記録）
+	trackWatchId: null,
+	trackBuffer: [], // サーバー未送信の座標点
+	trackFlushTimer: null,
+	trackPolyline: null, // 記録中にリアルタイム描画するpolyline
+	wakeLock: null,
 };
 
 function escapeHtml(str) {
@@ -83,6 +104,7 @@ let geoLayer = null;
 let chomeLayer = null;
 let pollingStationLayer = null;
 const commentLayerGroup = L.layerGroup();
+const trackQueryLayerGroup = L.layerGroup();
 
 function weightForZoom(baseWeight) {
 	const zoomDiff = map.getZoom() - MAP_INITIAL_ZOOM;
@@ -291,12 +313,24 @@ async function loadPollingStations() {
 	pollingStationLayer = L.layerGroup(markers);
 }
 
+function saveUiState() {
+	sessionStorage.setItem(
+		UI_STATE_KEY,
+		JSON.stringify({
+			pollingStationVisible: document.getElementById('polling-station-toggle').checked,
+			commentFilterCategories: Array.from(state.commentFilterCategories),
+			gpsActive: state.watchId !== null,
+		}),
+	);
+}
+
 document.getElementById('polling-station-toggle').addEventListener('change', (e) => {
 	if (e.target.checked) {
 		pollingStationLayer.addTo(map);
 	} else {
 		map.removeLayer(pollingStationLayer);
 	}
+	saveUiState();
 });
 
 // ---- 地図コメント（issue#24） ----
@@ -364,6 +398,7 @@ function populateCommentFilterCheckboxes() {
 			if (input.checked) state.commentFilterCategories.add(category.value);
 			else state.commentFilterCategories.delete(category.value);
 			renderCommentMarkers();
+			saveUiState();
 		});
 		label.appendChild(input);
 		label.appendChild(document.createTextNode(category.label));
@@ -876,18 +911,21 @@ document.getElementById('term-select').addEventListener('change', (e) => {
 
 // ---- GPS ----
 
-const gpsButton = document.getElementById('gps-button');
-gpsButton.addEventListener('click', () => {
+function stopGpsWatch() {
 	if (state.watchId !== null) {
 		navigator.geolocation.clearWatch(state.watchId);
 		state.watchId = null;
-		gpsButton.classList.remove('active');
-		if (state.gpsMarker) {
-			map.removeLayer(state.gpsMarker);
-			state.gpsMarker = null;
-		}
-		return;
 	}
+	gpsButton.classList.remove('active');
+	if (state.gpsMarker) {
+		map.removeLayer(state.gpsMarker);
+		state.gpsMarker = null;
+	}
+}
+
+const gpsButton = document.getElementById('gps-button');
+
+function startGpsWatch() {
 	if (!navigator.geolocation) {
 		alert('この端末は位置情報に対応していません');
 		return;
@@ -911,11 +949,151 @@ gpsButton.addEventListener('click', () => {
 		},
 		() => {
 			alert('現在地を取得できませんでした');
-			gpsButton.classList.remove('active');
-			state.watchId = null;
+			stopGpsWatch();
 		},
 		{ enableHighAccuracy: true },
 	);
+}
+
+gpsButton.addEventListener('click', () => {
+	if (state.watchId !== null) {
+		stopGpsWatch();
+	} else {
+		startGpsWatch();
+	}
+	saveUiState();
+});
+
+// ---- GPS軌跡記録 ----
+// START/STOPで移動軌跡を記録する。位置取得はブラウザタブがフォアグラウンドでないと
+// 継続できないため、記録中は画面ロックを防止するWake Lockを併用し、タブが非表示に
+// なったら記録を自動停止する（フォアグラウンド前提を許容する運用判断）。
+// 現在地表示（#gps-button）と同時にwatchPositionを二重に張らないよう、記録開始時は
+// 現在地表示を止め、記録用watchPositionのコールバックでgpsMarkerも更新する。
+
+const TRACK_FLUSH_INTERVAL_MS = 20000;
+const TRACK_MAX_POINTS_PER_REQUEST = 200;
+
+async function flushTrackBuffer() {
+	if (state.trackId === null || state.trackBuffer.length === 0) return;
+	const trackId = state.trackId;
+	const toSend = state.trackBuffer.splice(0, TRACK_MAX_POINTS_PER_REQUEST);
+	try {
+		const res = await apiFetch(`/api/gps-tracks/${trackId}/points`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ points: toSend }),
+		});
+		if (!res.ok) {
+			state.trackBuffer = toSend.concat(state.trackBuffer);
+		}
+	} catch {
+		state.trackBuffer = toSend.concat(state.trackBuffer);
+	}
+}
+
+const trackRecordButton = document.getElementById('track-record-button');
+
+async function startTracking() {
+	stopGpsWatch();
+	if (!navigator.geolocation) {
+		alert('この端末は位置情報に対応していません');
+		return;
+	}
+
+	const res = await apiFetch('/api/gps-tracks/start', { method: 'POST' });
+	const data = await res.json();
+	if (!res.ok) {
+		alert(data.error ?? '記録の開始に失敗しました');
+		return;
+	}
+
+	state.trackId = data.track_id;
+	state.trackBuffer = [];
+	state.trackPolyline = L.polyline([], { color: '#dc2626', weight: 4 }).addTo(map);
+	trackRecordButton.classList.add('active');
+	gpsButton.disabled = true;
+
+	if (navigator.wakeLock) {
+		state.wakeLock = await navigator.wakeLock.request('screen').catch(() => null);
+	}
+
+	let firstFix = true;
+	state.trackWatchId = navigator.geolocation.watchPosition(
+		(pos) => {
+			const latlng = [pos.coords.latitude, pos.coords.longitude];
+			state.trackBuffer.push({
+				lat: pos.coords.latitude,
+				lng: pos.coords.longitude,
+				recorded_at: new Date(pos.timestamp).toISOString(),
+				accuracy: pos.coords.accuracy,
+			});
+			state.trackPolyline.addLatLng(latlng);
+			if (!state.gpsMarker) {
+				state.gpsMarker = L.marker(latlng, {
+					icon: L.divIcon({ className: '', html: '<div class="gps-dot"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+				}).addTo(map);
+			} else {
+				state.gpsMarker.setLatLng(latlng);
+			}
+			if (firstFix) {
+				map.setView(latlng, Math.max(map.getZoom(), 15));
+				firstFix = false;
+			}
+		},
+		() => {
+			alert('現在地を取得できませんでした');
+			stopTracking();
+		},
+		{ enableHighAccuracy: true },
+	);
+
+	state.trackFlushTimer = setInterval(flushTrackBuffer, TRACK_FLUSH_INTERVAL_MS);
+}
+
+async function stopTracking() {
+	if (state.trackId === null) return;
+	const trackId = state.trackId;
+
+	if (state.trackWatchId !== null) {
+		navigator.geolocation.clearWatch(state.trackWatchId);
+		state.trackWatchId = null;
+	}
+	if (state.trackFlushTimer !== null) {
+		clearInterval(state.trackFlushTimer);
+		state.trackFlushTimer = null;
+	}
+	// オフライン等で送信不能な場合の無限ループを避けるため試行回数に上限を設ける
+	for (let attempts = 0; state.trackBuffer.length > 0 && attempts < 5; attempts++) {
+		await flushTrackBuffer();
+	}
+	await apiFetch(`/api/gps-tracks/${trackId}/stop`, { method: 'POST' }).catch(() => {});
+	state.trackId = null;
+
+	if (state.wakeLock) {
+		await state.wakeLock.release().catch(() => {});
+		state.wakeLock = null;
+	}
+	if (state.gpsMarker) {
+		map.removeLayer(state.gpsMarker);
+		state.gpsMarker = null;
+	}
+	trackRecordButton.classList.remove('active');
+	gpsButton.disabled = false;
+}
+
+trackRecordButton.addEventListener('click', () => {
+	if (state.trackId !== null) {
+		stopTracking();
+	} else {
+		startTracking();
+	}
+});
+
+document.addEventListener('visibilitychange', () => {
+	if (document.visibilityState === 'hidden' && state.trackId !== null) {
+		stopTracking();
+	}
 });
 
 // ---- メニュー ----
@@ -1012,6 +1190,99 @@ document.getElementById('new-term-submit').addEventListener('click', async () =>
 	await loadTerms();
 });
 
+// ---- 軌跡照会 ----
+// 記録済みのGPS軌跡（gps_tracks/gps_track_points）を日付範囲で照会し、地図に重ね描きする。
+// 一般ユーザーは自分の軌跡のみ、管理者は全員分または特定ユーザーを選んで閲覧できる
+// （権限の判定はサーバー側 GET /api/gps-tracks 内で行っており、フロントのユーザー選択欄は
+// 管理者にのみ表示する）。
+
+const TRACK_COLOR_PALETTE = ['#2563eb', '#dc2626', '#16a34a', '#7c3aed', '#f59e0b', '#0d9488', '#db2777', '#4b5563'];
+
+function colorForUser(userId) {
+	let hash = 0;
+	for (const ch of String(userId)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+	return TRACK_COLOR_PALETTE[hash % TRACK_COLOR_PALETTE.length];
+}
+
+const trackQueryModal = document.getElementById('track-query-modal');
+const trackQueryFromInput = document.getElementById('track-query-from');
+const trackQueryToInput = document.getElementById('track-query-to');
+const trackQueryUserField = document.getElementById('track-query-user-field');
+const trackQueryUserSelect = document.getElementById('track-query-user-select');
+const trackQueryError = document.getElementById('track-query-error');
+
+function openTrackQueryModal() {
+	trackQueryError.textContent = '';
+	if (!trackQueryFromInput.value) {
+		const today = new Date().toISOString().slice(0, 10);
+		trackQueryFromInput.value = today;
+		trackQueryToInput.value = today;
+	}
+	if (session.user.role === '管理者') {
+		trackQueryUserField.style.display = 'block';
+		trackQueryUserSelect.innerHTML =
+			'<option value="">(全員)</option>' + state.activeUsers.map((u) => `<option value="${u.user_id}">${escapeHtml(u.name)}</option>`).join('');
+	} else {
+		trackQueryUserField.style.display = 'none';
+	}
+	trackQueryModal.classList.add('show');
+}
+
+function closeTrackQueryModal() {
+	trackQueryModal.classList.remove('show');
+}
+
+document.getElementById('track-query-button').addEventListener('click', () => {
+	menuPanel.classList.remove('show');
+	openTrackQueryModal();
+});
+document.getElementById('track-query-close').addEventListener('click', closeTrackQueryModal);
+
+document.getElementById('track-query-clear').addEventListener('click', () => {
+	trackQueryLayerGroup.clearLayers();
+	if (map.hasLayer(trackQueryLayerGroup)) map.removeLayer(trackQueryLayerGroup);
+	closeTrackQueryModal();
+});
+
+document.getElementById('track-query-show').addEventListener('click', async () => {
+	const from = trackQueryFromInput.value;
+	const to = trackQueryToInput.value;
+	if (!from || !to) {
+		trackQueryError.textContent = '開始日・終了日を指定してください';
+		return;
+	}
+	trackQueryError.textContent = '';
+
+	const params = new URLSearchParams({ from, to });
+	if (session.user.role === '管理者' && trackQueryUserSelect.value) {
+		params.set('user_id', trackQueryUserSelect.value);
+	}
+	const res = await apiFetch(`/api/gps-tracks?${params.toString()}`);
+	const data = await res.json();
+	if (!res.ok) {
+		trackQueryError.textContent = data.error ?? '照会に失敗しました';
+		return;
+	}
+
+	trackQueryLayerGroup.clearLayers();
+	for (const track of data.tracks) {
+		if (track.points.length === 0) continue;
+		const latlngs = track.points.map((p) => [p.lat, p.lng]);
+		const polyline = L.polyline(latlngs, { color: colorForUser(track.user_id), weight: 4 });
+		const popup = document.createElement('div');
+		popup.className = 'popup-content';
+		popup.innerHTML = `
+			<div class="title">${escapeHtml(track.user_name)}</div>
+			<div class="row"><span>開始:</span><span>${new Date(track.started_at).toLocaleString('ja-JP')}</span></div>
+			<div class="row"><span>終了:</span><span>${track.ended_at ? new Date(track.ended_at).toLocaleString('ja-JP') : '記録中'}</span></div>
+		`;
+		polyline.bindPopup(popup);
+		trackQueryLayerGroup.addLayer(polyline);
+	}
+	if (!map.hasLayer(trackQueryLayerGroup)) trackQueryLayerGroup.addTo(map);
+	closeTrackQueryModal();
+});
+
 // ---- 初期化 ----
 
 async function init() {
@@ -1024,8 +1295,17 @@ async function init() {
 		await loadChomeBoundary();
 	}
 	await loadPollingStations();
+	// デフォルトは表示。保存済み状態（バーガーメニュー内リンクへ遷移して戻った場合等）があればそれを復元する。
+	const pollingStationToggle = document.getElementById('polling-station-toggle');
+	pollingStationToggle.checked = savedUiState ? savedUiState.pollingStationVisible : true;
+	if (pollingStationToggle.checked) pollingStationLayer.addTo(map);
+
 	await loadComments();
 	await loadTerms();
+
+	if (savedUiState?.gpsActive) {
+		startGpsWatch();
+	}
 }
 
 init();

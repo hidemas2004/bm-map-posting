@@ -1,0 +1,17 @@
+{
+  "displayName": "横浜市青葉区",
+  "cityName": "横浜市青葉区",
+  "cityCode": "14117",
+  "mapCenter": [
+    35.5603,
+    139.518
+  ],
+  "mapZoom": 13,
+  "hasChomeBoundary": true,
+  "adminUserId": "admin",
+  "adminName": "管理者",
+  "databaseId": "bdc6d5cf-6cde-4172-861d-1d60786eb8b9",
+  "dbSeeded": true,
+  "secretsSet": true,
+  "deployedUrl": "https://bm-map-posting-14117-aoba.blackdog-yokohama-japan.workers.dev"
+}

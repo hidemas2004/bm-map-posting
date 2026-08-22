@@ -67,6 +67,8 @@ npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0004_chome_area_id.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0006_polling_stations.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0007_comments.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0008_add_polling_station_uncertain.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0009_gps_tracks.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=regions/14213-yamato/areas.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=seed/users.sql
 ```
@@ -160,6 +162,26 @@ term/areaに紐付かない独立データ（`comments`テーブル、投票所�
 
 画像添付は当初検討したがオーバースペックのため見送り、R2バケットも使用しない
 （2026-08時点）。
+
+## GPS移動軌跡の記録・照会機能
+
+配布員が実際にどのルートを歩いたかを記録し、事後的に地図上で確認できる機能。ヘッダの
+「🔴」ボタンで記録開始/終了、記録中は地図上にリアルタイムで軌跡線を描画する。ハンバーガー
+メニューの「軌跡照会」から日付範囲を指定して過去の軌跡を表示・消去できる。
+
+- API本体は`worker/gps_tracks.ts`。`gps_tracks`（記録セッション単位）と`gps_track_points`
+  （座標点単位）にテーブルを分割している（`migrations/0009_gps_tracks.sql`）。
+  `POST /api/gps-tracks/start` / `POST /api/gps-tracks/:id/points`（座標点のbatch送信） /
+  `POST /api/gps-tracks/:id/stop` / `GET /api/gps-tracks?from=&to=&user_id=`。
+- 位置情報取得はブラウザの`watchPosition`に依存するため、**タブがフォアグラウンドでないと
+  記録は継続できない**（意図的な制約。バックグラウンド対応はしていない）。記録中は
+  `navigator.wakeLock`で画面ロックを防止し、タブが非表示になった場合は記録を自動停止する。
+- 座標点はクライアント側で20秒間隔程度でバッファし、まとめてサーバーに送信する
+  （`public/app.js`の`flushTrackBuffer`）。STOP時は残りを送信しきってから記録終了を確定する。
+- 軌跡照会の閲覧権限: 一般ユーザーは自分の軌跡のみ、管理者は全ユーザー分（またはユーザーを
+  選んで）閲覧できる（`worker/gps_tracks.ts`の`queryTracks`でサーバー側が強制する。フロントの
+  ユーザー選択欄は管理者にのみ表示するだけで、権限の実体はサーバー側判定）。
+- データの保持期間は無期限（自動削除の仕組みは無い。2026-08時点）。
 
 ## 行政区域データの追加・基本単位区単位への格上げ手順
 

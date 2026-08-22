@@ -84,6 +84,24 @@
         "MAP_ZOOM": 13,
         "HAS_CHOME_BOUNDARY": true
       }
+    },
+    "14117-aoba": {
+      "name": "bm-map-posting-14117-aoba",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bm-posting-db-14117-aoba",
+          "database_id": "bdc6d5cf-6cde-4172-861d-1d60786eb8b9"
+        }
+      ],
+      "vars": {
+        "REGION_ID": "14117-aoba",
+        "REGION_DISPLAY_NAME": "横浜市青葉区",
+        "MAP_CENTER_LAT": 35.5603,
+        "MAP_CENTER_LNG": 139.518,
+        "MAP_ZOOM": 13,
+        "HAS_CHOME_BOUNDARY": true
+      }
     }
   }
 }
