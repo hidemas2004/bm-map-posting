@@ -21,6 +21,7 @@
       <span id="comment-filter-checkboxes"></span>
     </div>
     <div class="header-actions">
+      <button id="search-button" type="button" title="検索">🔍</button>
       <button id="gps-button" type="button" title="現在地">📍</button>
       <button id="track-record-button" type="button" title="軌跡記録">🔴</button>
       <button id="menu-button" type="button" title="メニュー">&#8801;</button>
@@ -33,7 +34,14 @@
       <strong id="stat-planned-households">0</strong>(<span id="stat-planned-rate">0.0%</span>)
     </span>
   </div>
+  <div class="header-row header-row-search" id="search-row">
+    <form id="search-form" autocomplete="off">
+      <input type="search" id="search-input" placeholder="施設名・住所・町名・投票所" enterkeyhint="search">
+      <button type="submit">検索</button>
+    </form>
+  </div>
   <div class="header-toggle-hint" aria-hidden="true"></div>
+  <div id="search-results"></div>
   <div id="menu-panel">
     <button id="new-term-button" type="button" style="display:none;">新ターム開始</button>
     <button id="track-query-button" type="button">軌跡照会</button>

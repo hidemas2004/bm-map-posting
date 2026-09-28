@@ -31,6 +31,7 @@ const state = {
 	watchId: null,
 	gpsMarker: null,
 	assigneeFilter: '', // ''=全体表示、それ以外はuser_id
+	pollingStations: [], // 検索用（loadPollingStationsで取得した生データ）
 	comments: new Map(), // comment_id -> comment（issue#24。全ターム共通データなのでterm切替の影響を受けない）
 	// 表示中のカテゴリ集合（空＝表示しない）。デフォルトは全カテゴリ表示、保存済み状態があればそれを復元する。
 	commentFilterCategories: new Set(savedUiState?.commentFilterCategories ?? COMMENT_CATEGORIES.map((c) => c.value)),
@@ -301,6 +302,7 @@ async function loadChomeBoundary() {
 async function loadPollingStations() {
 	const res = await apiFetch('/api/polling-stations');
 	const stations = await res.json();
+	state.pollingStations = stations;
 	const markers = stations.map((s) => {
 		const popup = document.createElement('div');
 		popup.className = 'popup-content';
@@ -314,7 +316,7 @@ async function loadPollingStations() {
 			popup.appendChild(address);
 		}
 		const uncertainMark = s.location_uncertain ? '<span class="pin-uncertain-mark">?</span>' : '';
-		return L.marker([s.lat, s.lng], {
+		const marker = L.marker([s.lat, s.lng], {
 			icon: L.divIcon({
 				className: '',
 				html: `<div class="polling-station-pin" style="background:${POLLING_STATION_PIN_COLOR}">${uncertainMark}</div>`,
@@ -322,6 +324,8 @@ async function loadPollingStations() {
 				iconAnchor: [11, 22],
 			}),
 		}).bindPopup(popup);
+		marker.pollingStation = s; // 検索結果からポップアップを開くための逆引き用
+		return marker;
 	});
 	pollingStationLayer = L.layerGroup(markers);
 }
@@ -398,6 +402,7 @@ function renderCommentMarkers() {
 	for (const comment of state.comments.values()) {
 		if (!state.commentFilterCategories.has(comment.category)) continue;
 		const marker = L.marker([comment.lat, comment.lng], { icon: commentIconFor(comment) });
+		marker.commentId = comment.comment_id; // 検索結果からポップアップを開くための逆引き用
 		marker.bindPopup(buildCommentViewContent(comment, marker));
 		commentLayerGroup.addLayer(marker);
 	}
@@ -1143,6 +1148,264 @@ const header = document.getElementById('header');
 document.querySelector('.header-toggle-hint').addEventListener('click', () => {
 	header.classList.toggle('collapsed');
 	requestAnimationFrame(() => map.invalidateSize());
+});
+
+// ---- 検索 ----
+// ヘッダの🔍ボタンで検索欄を開閉する。入力中はシステム内データ（町丁目・投票所・コメント）を
+// 通信なしで即時に絞り込み、Enter／検索ボタン押下時のみ外部API（国土地理院 住所検索・
+// OpenStreetMap Nominatim）にも問い合わせる（Nominatimの利用規約で入力中の逐次問い合わせが
+// 禁止されているため）。外部APIはどちらもAPIキー不要・CORS許可済みでブラウザから直接呼ぶ。
+
+const GSI_ADDRESS_SEARCH_URL = 'https://msearch.gsi.go.jp/address-search/AddressSearch';
+const NOMINATIM_SEARCH_URL = 'https://nominatim.openstreetmap.org/search';
+const SEARCH_FOCUS_ZOOM = 17;
+const SEARCH_LOCAL_RESULT_LIMIT = 20;
+
+const searchButton = document.getElementById('search-button');
+const searchForm = document.getElementById('search-form');
+const searchInput = document.getElementById('search-input');
+const searchResultsPanel = document.getElementById('search-results');
+const searchResultLayer = L.layerGroup().addTo(map); // 検索でフォーカスした地点の一時的な強調表示
+let searchSeq = 0; // 古い外部検索の応答で新しい結果を上書きしないための通し番号
+let chomeSearchIndex = null;
+
+const KANJI_DIGITS = { 〇: '0', 一: '1', 二: '2', 三: '3', 四: '4', 五: '5', 六: '6', 七: '7', 八: '8', 九: '9' };
+
+/** 部分一致比較用の正規化。全角英数→半角、ヶ/ケの統一、漢数字→算用数字（「二丁目」と「2丁目」を
+ *  一致させるため。「二俣川」→「2俣川」のように地名側も変換されるが、比較の両辺に同じ変換を
+ *  かけるので一致判定には影響しない）、空白除去。 */
+function normalizeQuery(str) {
+	return String(str ?? '')
+		.normalize('NFKC')
+		.toLowerCase()
+		.replace(/[ヶヵ]/g, 'ケ')
+		.replace(/[〇一二三四五六七八九]/g, (ch) => KANJI_DIGITS[ch])
+		.replace(/\s+/g, '');
+}
+
+/** 町丁目名→範囲の索引。エリア境界レイヤーがある地域はその各ポリゴン、無い地域は区画の
+ *  town/chomeごとに範囲を合成する。初回検索時に一度だけ作る。 */
+function buildChomeSearchIndex() {
+	const index = new Map();
+	const source = chomeLayer ?? geoLayer;
+	if (!source) return [];
+	source.eachLayer((layer) => {
+		const { town, chome } = layer.feature.properties;
+		if (!town) return;
+		const label = chome ? `${town}${chome}丁目` : town;
+		const entry = index.get(label);
+		if (entry) {
+			entry.bounds.extend(layer.getBounds());
+			entry.features.push(layer.feature);
+		} else {
+			// getBounds()はレイヤー内部の範囲オブジェクトそのものを返すため、extendで書き換えないよう複製する
+			const b = layer.getBounds();
+			index.set(label, { label, key: normalizeQuery(label), bounds: L.latLngBounds(b.getSouthWest(), b.getNorthEast()), features: [layer.feature] });
+		}
+	});
+	return Array.from(index.values());
+}
+
+function searchLocal(query) {
+	const q = normalizeQuery(query);
+	if (!q) return [];
+	chomeSearchIndex ??= buildChomeSearchIndex();
+	const results = [];
+	for (const entry of chomeSearchIndex) {
+		if (entry.key.includes(q)) {
+			results.push({ kind: '町丁目', title: entry.label, focus: () => focusChome(entry) });
+		}
+	}
+	for (const s of state.pollingStations) {
+		if (normalizeQuery(s.name).includes(q) || normalizeQuery(s.address).includes(q)) {
+			results.push({ kind: '投票所', title: s.name, sub: s.address, focus: () => focusPollingStation(s) });
+		}
+	}
+	for (const c of state.comments.values()) {
+		if (c.body && normalizeQuery(c.body).includes(q)) {
+			results.push({ kind: 'コメント', title: c.body.split('\n')[0], sub: commentCategoryMeta(c.category).label, focus: () => focusComment(c) });
+		}
+	}
+	return results.slice(0, SEARCH_LOCAL_RESULT_LIMIT);
+}
+
+/** 外部検索の対象範囲＝この地域の区画全体（少し余白を持たせる）。地域ごとの設定は不要。 */
+function searchBounds() {
+	return (geoLayer ? geoLayer.getBounds() : map.getBounds()).pad(0.1);
+}
+
+async function searchGsi(query) {
+	const bounds = searchBounds();
+	const fetchOnce = async (q) => {
+		const res = await fetch(`${GSI_ADDRESS_SEARCH_URL}?q=${encodeURIComponent(q)}`);
+		if (!res.ok) throw new Error(`GSI ${res.status}`);
+		const features = await res.json();
+		return features
+			.map((f) => ({ lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], title: f.properties.title }))
+			// 部分一致しなかった場合に返る「神奈川県横浜市旭区」のような地域全体を指す結果は除外する
+			.filter((r) => bounds.contains([r.lat, r.lng]) && !r.title.endsWith(REGION_DISPLAY_NAME));
+	};
+	// 地理院APIは「旭区役所」→「大阪市旭区」のように他地域も返すため範囲で絞り込む。市区名を省いた
+	// 住所（「鶴ケ峰1-4-12」等）は範囲内の結果が出ないことがあるので、地域名を前置して1回だけ再試行する。
+	let results = await fetchOnce(query);
+	if (results.length === 0 && !query.includes(REGION_DISPLAY_NAME)) {
+		results = await fetchOnce(`${REGION_DISPLAY_NAME}${query}`);
+	}
+	return results.map((r) => ({
+		kind: '住所',
+		title: r.title.replace(/^神奈川県/, ''),
+		focus: () => focusPoint([r.lat, r.lng], r.title),
+	}));
+}
+
+async function searchNominatim(query) {
+	const b = searchBounds();
+	const params = new URLSearchParams({
+		q: query,
+		format: 'jsonv2',
+		countrycodes: 'jp',
+		'accept-language': 'ja',
+		limit: '8',
+		bounded: '1',
+		viewbox: [b.getWest(), b.getNorth(), b.getEast(), b.getSouth()].join(','),
+	});
+	const res = await fetch(`${NOMINATIM_SEARCH_URL}?${params}`);
+	if (!res.ok) throw new Error(`Nominatim ${res.status}`);
+	const places = await res.json();
+	return places.map((p) => {
+		// display_nameは「施設名, 道路, 町丁目, …, 横浜市, 神奈川県, 郵便番号, 日本」の順なので、
+		// 国・県・郵便番号を除いて逆順に並べ、「横浜市 旭区 鶴ケ峰 …」の住所風の補足にする。
+		const parts = p.display_name.split(', ').filter((part) => !['日本', '神奈川県'].includes(part) && !/^\d{3}-\d{4}$/.test(part));
+		const title = p.name || parts[0];
+		const sub = parts.slice(1).reverse().join(' ');
+		return { kind: '施設', title, sub, focus: () => focusPoint([Number(p.lat), Number(p.lon)], title) };
+	});
+}
+
+function renderSearchResults(results, { message = '', showAttribution = false } = {}) {
+	searchResultsPanel.innerHTML = '';
+	for (const r of results) {
+		const button = document.createElement('button');
+		button.type = 'button';
+		button.className = 'search-result';
+		button.innerHTML = `<span class="search-kind">${escapeHtml(r.kind)}</span><span>${escapeHtml(r.title)}${r.sub ? `<span class="search-sub">${escapeHtml(r.sub)}</span>` : ''}</span>`;
+		button.addEventListener('click', () => {
+			hideSearchResults();
+			searchInput.blur(); // スマホでソフトキーボードを閉じ、地図を見えるようにする
+			r.focus();
+		});
+		searchResultsPanel.appendChild(button);
+	}
+	if (message) {
+		const p = document.createElement('div');
+		p.className = 'search-message';
+		p.textContent = message;
+		searchResultsPanel.appendChild(p);
+	}
+	if (showAttribution) {
+		const p = document.createElement('div');
+		p.className = 'search-attribution';
+		p.textContent = '住所検索: 国土地理院 / 施設検索: © OpenStreetMap contributors';
+		searchResultsPanel.appendChild(p);
+	}
+	searchResultsPanel.classList.toggle('show', searchResultsPanel.childElementCount > 0);
+}
+
+function hideSearchResults() {
+	searchResultsPanel.classList.remove('show');
+}
+
+function focusPoint(latlng, title) {
+	searchResultLayer.clearLayers();
+	const marker = L.circleMarker(latlng, { radius: 10, color: '#dc2626', weight: 3, fillColor: '#dc2626', fillOpacity: 0.3 });
+	marker.bindPopup(escapeHtml(title));
+	searchResultLayer.addLayer(marker);
+	map.setView(latlng, Math.max(map.getZoom(), SEARCH_FOCUS_ZOOM));
+	marker.openPopup();
+}
+
+function focusChome(entry) {
+	searchResultLayer.clearLayers();
+	searchResultLayer.addLayer(
+		L.geoJSON(entry.features, { interactive: false, style: { color: '#dc2626', weight: 4, dashArray: '8 6', fill: false } }),
+	);
+	map.fitBounds(entry.bounds);
+}
+
+function focusPollingStation(station) {
+	searchResultLayer.clearLayers();
+	// 投票所が非表示なら表示に切り替える（ヘッダのチェックボックスと状態を揃える）
+	const toggle = document.getElementById('polling-station-toggle');
+	if (!toggle.checked) {
+		toggle.checked = true;
+		pollingStationLayer.addTo(map);
+		saveUiState();
+	}
+	const marker = pollingStationLayer.getLayers().find((m) => m.pollingStation === station);
+	map.setView([station.lat, station.lng], Math.max(map.getZoom(), SEARCH_FOCUS_ZOOM));
+	marker?.openPopup();
+}
+
+function focusComment(comment) {
+	const marker = map.hasLayer(commentLayerGroup) ? commentLayerGroup.getLayers().find((m) => m.commentId === comment.comment_id) : null;
+	if (!marker) {
+		// フィルタで非表示のカテゴリは位置の強調表示のみ
+		focusPoint([comment.lat, comment.lng], comment.body);
+		return;
+	}
+	searchResultLayer.clearLayers();
+	map.setView([comment.lat, comment.lng], Math.max(map.getZoom(), SEARCH_FOCUS_ZOOM));
+	marker.openPopup();
+}
+
+searchButton.addEventListener('click', () => {
+	const open = header.classList.toggle('search-open');
+	if (open) {
+		header.classList.remove('collapsed'); // 折りたたみ中は検索欄も隠れるため開く
+		searchInput.focus();
+	} else {
+		hideSearchResults();
+		searchResultLayer.clearLayers();
+	}
+	searchButton.classList.toggle('active', open);
+	requestAnimationFrame(() => map.invalidateSize());
+});
+
+searchInput.addEventListener('input', () => {
+	searchSeq++;
+	const query = searchInput.value.trim();
+	if (!query) {
+		hideSearchResults();
+		return;
+	}
+	const local = searchLocal(query);
+	renderSearchResults(local, { message: local.length === 0 ? 'Enterで住所・施設を検索' : '' });
+});
+
+searchInput.addEventListener('focus', () => {
+	if (searchInput.value.trim() && searchResultsPanel.childElementCount > 0) searchResultsPanel.classList.add('show');
+});
+
+searchForm.addEventListener('submit', async (e) => {
+	e.preventDefault();
+	const query = searchInput.value.trim();
+	if (!query) return;
+	const seq = ++searchSeq;
+	const local = searchLocal(query);
+	renderSearchResults(local, { message: '住所・施設を検索中…' });
+	const [gsi, nominatim] = await Promise.allSettled([searchGsi(query), searchNominatim(query)]);
+	if (seq !== searchSeq) return;
+	const external = [...(gsi.status === 'fulfilled' ? gsi.value : []), ...(nominatim.status === 'fulfilled' ? nominatim.value : [])];
+	const failed = gsi.status === 'rejected' || nominatim.status === 'rejected';
+	const results = [...local, ...external];
+	let message = '';
+	if (results.length === 0) message = failed ? '見つかりませんでした（外部検索の一部が失敗しました）' : '見つかりませんでした';
+	else if (failed) message = '外部検索の一部が失敗しました';
+	renderSearchResults(results, { message, showAttribution: true });
+});
+
+document.addEventListener('click', (e) => {
+	if (!searchResultsPanel.contains(e.target) && !searchForm.contains(e.target)) hideSearchResults();
 });
 
 const newTermButton = document.getElementById('new-term-button');

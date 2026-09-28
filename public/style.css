@@ -9,9 +9,12 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
    連動してクリップ対象になり、子要素の#menu-panel（top:100%で#headerの下端の
    外側にはみ出す前提のドロップダウン）が丸ごと非表示になる（過去に発生・修正済み）。
    横はみ出し防止が必要な場合は、#menu-panelを持たない.header-row側に付けること。 */
+/* z-indexはLeafletのズームボタン等(.leaflet-top/.leaflet-bottom: 1000)より上にする。同値だと
+   DOM順で後ろの#map側が勝ち、ヘッダから下に重なる#search-results等の上にズームボタンが出てしまう。
+   モーダル(.modal-overlay: 2000)よりは下。 */
 #header {
   position: relative;
-  z-index: 1000;
+  z-index: 1100;
   background: #111827;
   color: #f3f4f6;
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
@@ -88,6 +91,36 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
   text-decoration: none; border-bottom: 1px solid #e5e7eb;
 }
 #menu-panel a.menu-link:hover { background: #f3f4f6; }
+
+/* 検索欄。ヘッダの🔍ボタンで開閉する（#header.search-open）。結果ドロップダウンは
+   #menu-panelと同じくtop:100%で#headerの下端の外側に重ねる（#headerにoverflowを付けない前提）。 */
+.header-row-search { display: none; padding-top: 0; }
+#header.search-open .header-row-search { display: flex; }
+#search-form { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0; }
+#search-input {
+  flex: 1 1 auto; min-width: 0; font-size: 16px; padding: 6px 8px; border-radius: 6px; border: none;
+}
+#header #search-form button { font-size: 14px; white-space: nowrap; }
+#search-results {
+  display: none;
+  position: absolute; top: 100%; left: 8px; right: 8px; z-index: 1001;
+  max-height: 50vh; overflow-y: auto;
+  background: #ffffff; color: #111827; border: 1px solid #d1d5db; border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+#search-results.show { display: block; }
+#search-results .search-result {
+  display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+  padding: 10px 14px; background: none; border: none; border-bottom: 1px solid #e5e7eb;
+  font-size: 14px; color: inherit; cursor: pointer; font-family: inherit;
+}
+#search-results .search-result:hover { background: #f3f4f6; }
+#search-results .search-kind {
+  flex-shrink: 0; font-size: 11px; color: #ffffff; background: #6b7280; border-radius: 4px; padding: 1px 6px;
+}
+#search-results .search-sub { display: block; font-size: 12px; color: #6b7280; }
+#search-results .search-message { padding: 10px 14px; font-size: 13px; color: #6b7280; }
+#search-results .search-attribution { padding: 6px 14px; font-size: 10px; color: #9ca3af; text-align: right; }
 
 /* 履歴一覧・地域マスタ一覧などの一覧ページ共通レイアウト */
 body.list-page { background: #f3f4f6; }
