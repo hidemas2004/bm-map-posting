@@ -1,0 +1,17 @@
+{
+  "displayName": "横浜市旭区",
+  "cityName": "横浜市旭区",
+  "cityCode": "14112",
+  "mapCenter": [
+    35.476,
+    139.5283
+  ],
+  "mapZoom": 13,
+  "hasChomeBoundary": true,
+  "adminUserId": "admin",
+  "adminName": "管理者",
+  "databaseId": "f39de2ec-9558-4d1c-8660-df34662f0634",
+  "dbSeeded": true,
+  "secretsSet": true,
+  "deployedUrl": "https://bm-map-posting-14112-asahi.blackdog-yokohama-japan.workers.dev"
+}
