@@ -41,6 +41,8 @@ const state = {
 	trackFlushTimer: null,
 	trackPolyline: null, // 記録中にリアルタイム描画するpolyline
 	wakeLock: null,
+	currentLockAreaId: null, // 現在このクライアントが編集ロックを保持しているarea_id（無ければnull）
+	lockHeartbeatTimer: null,
 };
 
 function escapeHtml(str) {
@@ -275,7 +277,12 @@ async function loadBoundary() {
 		renderer: boundaryRenderer,
 		style: (feature) => styleForArea(feature.properties.area_id),
 		onEachFeature: (feature, layer) => {
+			const areaId = feature.properties.area_id;
 			layer.on('click', () => openPopup(layer));
+			// ポップアップが閉じるあらゆる経路（×ボタン／別区画クリックによる自動クローズ／
+			// 地図空白クリック／Escキー／term-select変更／保存後のclosePopup()呼び出し）を
+			// ここに集約し、編集ロックの解放漏れを防ぐ。
+			layer.on('popupclose', () => releaseLockIfHeld(areaId));
 		},
 	}).addTo(map);
 }
@@ -681,11 +688,114 @@ function buildCommentEditContent(comment, marker) {
 // 「ポップアップ外クリックで自動クローズ」機構が反応して閉じてしまうため、
 // 生成した要素は必ず disableClickPropagation で地図への伝播を止める。
 
-function openPopup(layer) {
+const LOCK_HEARTBEAT_INTERVAL_MS = 10000;
+
+function stopLockHeartbeat() {
+	if (state.lockHeartbeatTimer) {
+		clearInterval(state.lockHeartbeatTimer);
+		state.lockHeartbeatTimer = null;
+	}
+}
+
+/** 10秒間隔でロックを延長する。延長に失敗した場合（他人に奪われた）は即座に読み取り専用表示へ切り替える。 */
+function startLockHeartbeat(areaId, layer) {
+	stopLockHeartbeat();
+	state.lockHeartbeatTimer = setInterval(async () => {
+		if (state.currentLockAreaId !== areaId) {
+			stopLockHeartbeat();
+			return;
+		}
+		const res = await apiFetch('/api/locks/acquire', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ area_id: areaId }),
+		});
+		if (!res.ok) {
+			const data = await res.json();
+			stopLockHeartbeat();
+			state.currentLockAreaId = null;
+			const row = state.termDataByAreaId.get(areaId);
+			layer.setPopupContent(buildLockedPopup(row, layer.feature.properties, data.locked_by_name, true));
+			layer.getPopup().update();
+		}
+	}, LOCK_HEARTBEAT_INTERVAL_MS);
+}
+
+/** popupcloseで呼ばれる。自分が保持しているロックだけを解放する（他区画のポップアップには影響しない）。 */
+function releaseLockIfHeld(areaId) {
+	if (state.currentLockAreaId !== areaId) return;
+	stopLockHeartbeat();
+	state.currentLockAreaId = null;
+	apiFetch('/api/locks/release', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ area_id: areaId }),
+	}).catch(() => {});
+}
+
+async function openPopup(layer) {
 	const areaId = layer.feature.properties.area_id;
 	const row = state.termDataByAreaId.get(areaId);
+
+	const res = await apiFetch('/api/locks/acquire', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ area_id: areaId }),
+	});
+	const data = await res.json();
+
+	if (!res.ok) {
+		const content = buildLockedPopup(row, layer.feature.properties, data.locked_by_name, false);
+		layer.bindPopup(content).openPopup();
+		return;
+	}
+
+	state.currentLockAreaId = areaId;
+	startLockHeartbeat(areaId, layer);
+
 	const content = row ? buildPopupContent(row, layer) : buildNoDataPopup(layer.feature.properties);
 	layer.bindPopup(content).openPopup();
+}
+
+/** ロック取得できなかった／ハートビート失敗で奪われた区画の読み取り専用ポップアップ。 */
+function buildLockedPopup(row, props, lockedByName, takenOver) {
+	const container = document.createElement('div');
+	container.className = 'popup-content';
+	L.DomEvent.disableClickPropagation(container);
+
+	const bannerText = takenOver
+		? `${lockedByName}さんに編集が引き継がれました。入力中の内容は保存されていません。`
+		: `${lockedByName}さんが編集中です`;
+
+	if (!row) {
+		container.innerHTML = `
+			<div class="title">${areaTitle(props)}</div>
+			<p class="lock-banner">${escapeHtml(bannerText)}</p>
+		`;
+		return container;
+	}
+
+	const areaHouseholds = areaHouseholdsFor(row);
+	const areaDistributed = areaDistributedFor(row);
+	const areaRateDisplay = (areaHouseholds > 0 ? (areaDistributed / areaHouseholds) * 100 : 0).toFixed(1);
+	const areaBarWidth = Math.min(Number(areaRateDisplay), 100);
+	const rateDisplay = row.distribution_rate.toFixed(1);
+	const barWidth = Math.min(row.distribution_rate, 100);
+
+	container.innerHTML = `
+		<div class="title">${areaTitle(row)}</div>
+		<p class="lock-banner">${escapeHtml(bannerText)}</p>
+		<div class="assignee-row"><span>エリア担当: ${row.area_manager_name || '未設定'}</span></div>
+		<div class="assignee-row"><span>区画担当: ${row.assignee_name || '未担当'}</span></div>
+		<div class="row"><span>エリア世帯数:</span><span>${areaHouseholds.toLocaleString('ja-JP')} 世帯</span></div>
+		<div class="row"><span>区画世帯数:</span><span>${row.num_households.toLocaleString('ja-JP')} 世帯</span></div>
+		<div class="row"><span>エリア累計配布:</span><span>${areaDistributed.toLocaleString('ja-JP')}世帯(${areaRateDisplay}%)</span></div>
+		<div class="rate-bar-outer"><div class="rate-bar-inner" style="width:${areaBarWidth}%"></div></div>
+		<div class="row"><span>区画累計配布:</span><span>${row.distributed_total.toLocaleString('ja-JP')}世帯(${rateDisplay}%)</span></div>
+		<div class="rate-bar-outer"><div class="rate-bar-inner" style="width:${barWidth}%"></div></div>
+		<div class="row"><span>最終更新:</span><span>${row.last_updated_at ? new Date(row.last_updated_at).toLocaleString('ja-JP') : '未記録'}</span></div>
+	`;
+	return container;
 }
 
 function buildNoDataPopup(props) {
@@ -788,7 +898,15 @@ function buildPopupContent(row, layer) {
 
 	if (canEditAreaManager) {
 		const areaManagerEditButton = container.querySelector('[data-action="edit-area-manager"]');
-		areaManagerEditButton.addEventListener('click', () => {
+		areaManagerEditButton.addEventListener('click', async () => {
+			// 最終的な整合性はsetAreaManager側の同一チェックで担保する。ここはUX向上のための
+			// プリフライトに過ぎない（フォーム入力後に初めてブロックされる体験を避ける）。
+			const statusRes = await apiFetch(`/api/locks/area-status?chome_area_id=${encodeURIComponent(row.chome_area_id)}`);
+			const statusData = await statusRes.json();
+			if (statusData.locked) {
+				alert(`${statusData.locked_by_name}さんが編集中のため、エリア担当を変更できません`);
+				return;
+			}
 			layer.setPopupContent(buildAreaManagerEditContent(row, layer));
 			layer.getPopup().update();
 		});

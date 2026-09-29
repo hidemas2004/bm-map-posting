@@ -1,4 +1,5 @@
 import type { SessionUser } from './auth';
+import { checkChomeAreaLocked } from './locks';
 
 export interface RecordsEnv {
 	DB: D1Database;
@@ -62,17 +63,37 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	const now = new Date().toISOString();
 	const rate = Math.round((newTotal / row.num_households) * 100 * 10) / 10;
 
+	// activity_logへの記録前に事前チェックしておく（ロック喪失時に監査ログだけが残る事故を避ける）。
+	// 実際の整合性保証はこの後のUPDATE文のEXISTS条件（原子的チェック）側で行う。
+	const preCheckLock = await env.DB.prepare(
+		"SELECT 1 FROM edit_locks WHERE area_id = ? AND user_id = ? AND expires_at > datetime('now')",
+	)
+		.bind(areaId, user.user_id)
+		.first();
+	if (!preCheckLock) {
+		return Response.json({ error: 'ロックの有効期限が切れました。区画を選び直してください' }, { status: 409 });
+	}
+
 	await env.DB.prepare(
 		'INSERT INTO activity_log (term_id, area_id, updated_at, user_id, user_name, delta) VALUES (?, ?, ?, ?, ?, ?)',
 	)
 		.bind(termId, areaId, now, user.user_id, user.name, delta)
 		.run();
 
-	await env.DB.prepare(
-		'UPDATE term_data SET distributed_total = ?, distribution_rate = ?, last_updated_at = ? WHERE id = ?',
+	const updateResult = await env.DB.prepare(
+		`UPDATE term_data SET distributed_total = ?, distribution_rate = ?, last_updated_at = ?
+		 WHERE id = ?
+		   AND EXISTS (
+		     SELECT 1 FROM edit_locks
+		     WHERE area_id = ? AND user_id = ? AND expires_at > datetime('now')
+		   )`,
 	)
-		.bind(newTotal, rate, now, row.id)
+		.bind(newTotal, rate, now, row.id, areaId, user.user_id)
 		.run();
+
+	if (updateResult.meta.changes === 0) {
+		return Response.json({ error: 'ロックの有効期限が切れました。区画を選び直してください' }, { status: 409 });
+	}
 
 	const updated = await env.DB.prepare(
 		`SELECT areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.chome_area_id, areas.block, areas.num_households,
@@ -88,7 +109,7 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	return Response.json(updated);
 }
 
-export async function setAssignee(request: Request, env: RecordsEnv): Promise<Response> {
+export async function setAssignee(request: Request, env: RecordsEnv, user: SessionUser): Promise<Response> {
 	const body = await request
 		.json<{ term_id?: number; area_id?: string; assignee_id?: string | null }>()
 		.catch(() => ({}) as { term_id?: number; area_id?: string; assignee_id?: string | null });
@@ -122,13 +143,24 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 	}
 
 	const result = await env.DB.prepare(
-		'UPDATE term_data SET assignee_id = ?, assignee_name = ? WHERE term_id = ? AND area_id = ?',
+		`UPDATE term_data SET assignee_id = ?, assignee_name = ?
+		 WHERE term_id = ? AND area_id = ?
+		   AND EXISTS (
+		     SELECT 1 FROM edit_locks
+		     WHERE area_id = ? AND user_id = ? AND expires_at > datetime('now')
+		   )`,
 	)
-		.bind(assigneeId, assigneeName, termId, areaId)
+		.bind(assigneeId, assigneeName, termId, areaId, areaId, user.user_id)
 		.run();
 
 	if (result.meta.changes === 0) {
-		return Response.json({ error: '指定されたターム・エリアの組み合わせが見つかりません' }, { status: 404 });
+		const stillExists = await env.DB.prepare('SELECT 1 FROM term_data WHERE term_id = ? AND area_id = ?')
+			.bind(termId, areaId)
+			.first();
+		if (!stillExists) {
+			return Response.json({ error: '指定されたターム・エリアの組み合わせが見つかりません' }, { status: 404 });
+		}
+		return Response.json({ error: 'ロックの有効期限が切れました。区画を選び直してください' }, { status: 409 });
 	}
 
 	const updated = await env.DB.prepare(
@@ -152,7 +184,7 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
  * 同一エリア内の全区画（世帯数>0のもの）へ一括反映する（既に担当者が設定されている区画も上書きする）。
  * エリア担当を未設定(null)に戻す場合は area_manager のみ更新し、担当者の一括反映は行わない。
  */
-export async function setAreaManager(request: Request, env: RecordsEnv): Promise<Response> {
+export async function setAreaManager(request: Request, env: RecordsEnv, user: SessionUser): Promise<Response> {
 	const body = await request
 		.json<{ area_id?: string; area_manager_id?: string | null }>()
 		.catch(() => ({}) as { area_id?: string; area_manager_id?: string | null });
@@ -169,6 +201,12 @@ export async function setAreaManager(request: Request, env: RecordsEnv): Promise
 	if (!area) {
 		return Response.json({ error: '指定されたエリアが見つかりません' }, { status: 404 });
 	}
+
+	const lockedByName = await checkChomeAreaLocked(env, area.chome_area_id, user.user_id);
+	if (lockedByName) {
+		return Response.json({ error: `${lockedByName}さんが編集中です` }, { status: 409 });
+	}
+
 	if (area.num_households === 0) {
 		return Response.json({ error: '世帯数が0の区画ではエリア担当を設定できません' }, { status: 400 });
 	}
