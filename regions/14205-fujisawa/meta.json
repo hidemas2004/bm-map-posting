@@ -1,0 +1,17 @@
+{
+  "displayName": "藤沢市",
+  "cityName": "藤沢市",
+  "cityCode": "14205",
+  "mapCenter": [
+    35.3632,
+    139.4556
+  ],
+  "mapZoom": 13,
+  "hasChomeBoundary": true,
+  "adminUserId": "admin",
+  "adminName": "管理者",
+  "databaseId": "3796277d-44d6-4124-b71f-d69350cde0bc",
+  "dbSeeded": true,
+  "secretsSet": true,
+  "deployedUrl": "https://bm-map-posting-14205-fujisawa.blackdog-yokohama-japan.workers.dev"
+}
