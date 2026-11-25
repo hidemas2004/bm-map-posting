@@ -49,12 +49,22 @@ function escapeHtml(str) {
 	return String(str).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 }
 
+// 編集ロックの所有者を「ユーザー＋この画面」単位にするためのID（ページ読み込みごとに生成）。
+// 同じアカウントでPCとスマホなど複数の画面を開いても、互いに排他される（worker/locks.ts の clientIdOf）。
+const CLIENT_ID = (() => {
+	try {
+		if (crypto.randomUUID) return crypto.randomUUID();
+	} catch {}
+	return Array.from({ length: 4 }, () => Math.random().toString(36).slice(2, 10)).join('-');
+})();
+
 async function apiFetch(path, options = {}) {
 	const res = await fetch(path, {
 		...options,
 		headers: {
 			...(options.headers || {}),
 			Authorization: `Bearer ${session.token}`,
+			'X-Client-Id': CLIENT_ID,
 		},
 	});
 	if (res.status === 401) {
@@ -696,6 +706,11 @@ function buildCommentEditContent(comment, marker) {
 
 const LOCK_HEARTBEAT_INTERVAL_MS = 10000;
 
+/** ロック保持者の表示名。同じアカウントの別端末・タブが保持している場合は名前ではなくその旨を出す。 */
+function lockHolderLabel(data) {
+	return data.same_user ? '別の端末（またはタブ）' : `${data.locked_by_name}さん`;
+}
+
 function stopLockHeartbeat() {
 	if (state.lockHeartbeatTimer) {
 		clearInterval(state.lockHeartbeatTimer);
@@ -721,7 +736,7 @@ function startLockHeartbeat(areaId, layer) {
 			stopLockHeartbeat();
 			state.currentLockAreaId = null;
 			const row = state.termDataByAreaId.get(areaId);
-			layer.setPopupContent(buildLockedPopup(row, layer.feature.properties, data.locked_by_name, true));
+			layer.setPopupContent(buildLockedPopup(row, layer.feature.properties, lockHolderLabel(data), true));
 			layer.getPopup().update();
 		}
 	}, LOCK_HEARTBEAT_INTERVAL_MS);
@@ -739,19 +754,69 @@ function releaseLockIfHeld(areaId) {
 	}).catch(() => {});
 }
 
+// タブを閉じる・再読み込み・別ページへ移動したときも、保持中のロックを解放する
+// （解放できなくても有効期限30秒で自然に失効する。keepalive でページ破棄後も送信を完了させる）
+window.addEventListener('pagehide', () => {
+	const areaId = state.currentLockAreaId;
+	if (!areaId) return;
+	stopLockHeartbeat();
+	state.currentLockAreaId = null;
+	fetch('/api/locks/release', {
+		method: 'POST',
+		keepalive: true,
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}`, 'X-Client-Id': CLIENT_ID },
+		body: JSON.stringify({ area_id: areaId }),
+	}).catch(() => {});
+});
+
+let openPopupSeq = 0;
+
 async function openPopup(layer) {
 	const areaId = layer.feature.properties.area_id;
+	// ロック取得の応答待ちの間に別の区画をタップした場合、古い方の結果は捨てる
+	const seq = ++openPopupSeq;
+
+	let res;
+	let data;
+	try {
+		res = await apiFetch('/api/locks/acquire', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ area_id: areaId, term_id: state.currentTermId }),
+		});
+		data = await res.json();
+	} catch (e) {
+		if (e?.message === 'unauthorized') return;
+		if (seq !== openPopupSeq) return;
+		const div = document.createElement('div');
+		div.className = 'popup-content';
+		div.innerHTML = `<div class="title">${areaTitle(layer.feature.properties)}</div>
+			<p class="lock-banner">通信に失敗しました。もう一度タップしてください。</p>`;
+		layer.bindPopup(div).openPopup();
+		return;
+	}
+	if (seq !== openPopupSeq) {
+		// 取得できてしまったロックは使わないので解放しておく
+		if (res.ok) {
+			apiFetch('/api/locks/release', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ area_id: areaId }),
+			}).catch(() => {});
+		}
+		return;
+	}
+
+	// 他の人・端末による更新を反映する（同じエリア内の区画の最新データがロック応答に含まれる）
+	if (Array.isArray(data.rows) && data.rows.length > 0) {
+		for (const r of data.rows) state.termDataByAreaId.set(r.area_id, r);
+		redrawStyles();
+		updateHeaderStats();
+	}
 	const row = state.termDataByAreaId.get(areaId);
 
-	const res = await apiFetch('/api/locks/acquire', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ area_id: areaId }),
-	});
-	const data = await res.json();
-
 	if (!res.ok) {
-		const content = buildLockedPopup(row, layer.feature.properties, data.locked_by_name, false);
+		const content = buildLockedPopup(row, layer.feature.properties, lockHolderLabel(data), false);
 		layer.bindPopup(content).openPopup();
 		return;
 	}
@@ -764,14 +829,14 @@ async function openPopup(layer) {
 }
 
 /** ロック取得できなかった／ハートビート失敗で奪われた区画の読み取り専用ポップアップ。 */
-function buildLockedPopup(row, props, lockedByName, takenOver) {
+function buildLockedPopup(row, props, holderLabel, takenOver) {
 	const container = document.createElement('div');
 	container.className = 'popup-content';
 	L.DomEvent.disableClickPropagation(container);
 
 	const bannerText = takenOver
-		? `${lockedByName}さんに編集が引き継がれました。入力中の内容は保存されていません。`
-		: `${lockedByName}さんが編集中です`;
+		? `${holderLabel}に編集が引き継がれました。入力中の内容は保存されていません。`
+		: `${holderLabel}が編集中です。編集が終わってから、もう一度タップしてください。`;
 
 	if (!row) {
 		container.innerHTML = `
@@ -889,8 +954,9 @@ function buildPopupContent(row, layer) {
 			state.termDataByAreaId.set(row.area_id, data);
 			redrawStyles();
 			updateHeaderStats();
-			layer.setPopupContent(buildPopupContent(data, layer));
-			layer.getPopup().update();
+			// 記録が終わったらポップアップを閉じて編集ロックを解放し、他の人・端末がすぐ編集できるようにする
+			// （閉じると popupclose → releaseLockIfHeld が呼ばれる）
+			layer.closePopup();
 		});
 	}
 
@@ -910,7 +976,7 @@ function buildPopupContent(row, layer) {
 			const statusRes = await apiFetch(`/api/locks/area-status?chome_area_id=${encodeURIComponent(row.chome_area_id)}`);
 			const statusData = await statusRes.json();
 			if (statusData.locked) {
-				alert(`${statusData.locked_by_name}さんが編集中のため、エリア担当を変更できません`);
+				alert(`${lockHolderLabel(statusData)}がこのエリアの区画を編集中のため、エリア担当を変更できません`);
 				return;
 			}
 			layer.setPopupContent(buildAreaManagerEditContent(row, layer));

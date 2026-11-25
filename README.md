@@ -73,6 +73,7 @@ npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0011_gps_tracks_distance.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0012_term_area_manager.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0013_edit_locks.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0014_edit_locks_client_id.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=regions/14213-yamato/areas.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=seed/users.sql
 ```
@@ -168,7 +169,11 @@ CSVダウンロードに対応している（スプレッドシートでの目�
 ## 区画編集の排他制御（編集ロック）
 
 複数人が同一区画・エリアを同時に編集して後勝ちで上書きする事故を防ぐため、区画単位のTTL付き
-編集ロック（`edit_locks`テーブル、`migrations/0013_edit_locks.sql`、API本体は`worker/locks.ts`）を持つ。
+編集ロック（`edit_locks`テーブル、`migrations/0013_edit_locks.sql`・`0014_edit_locks_client_id.sql`、API本体は
+`worker/locks.ts`）を持つ。ロックの所有者は「ユーザー＋画面」単位で、画面（ページ読み込み）ごとにブラウザが
+生成するIDを`X-Client-Id`ヘッダで送る。そのため同じアカウントでPCとスマホなど複数の画面から開いた場合も
+排他される（当初はユーザー単位で、同じアカウントだと排他されず、片方が閉じるともう片方の記録が拒否される
+不具合があったため`0014`で変更）。記録が成功するとポップアップを閉じてロックを解放する。
 区画のポップアップを開くとロックを取得し（他人が保持中なら「◯◯さんが編集中です」の読み取り専用表示）、
 10秒間隔のハートビートで延長、閉じると解放する（TTL 30秒で自然失効）。配布実績記録・区画担当変更は
 ロック所有をUPDATE文の条件に含め、エリア担当変更はエリア内に他人のロックがあれば拒否する。

@@ -1,5 +1,5 @@
 import type { SessionUser } from './auth';
-import { checkChomeAreaLocked } from './locks';
+import { checkChomeAreaLocked, clientIdOf, lockedMessage } from './locks';
 
 export interface RecordsEnv {
 	DB: D1Database;
@@ -67,9 +67,9 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	// activity_logへの記録前に事前チェックしておく（ロック喪失時に監査ログだけが残る事故を避ける）。
 	// 実際の整合性保証はこの後のUPDATE文のEXISTS条件（原子的チェック）側で行う。
 	const preCheckLock = await env.DB.prepare(
-		"SELECT 1 FROM edit_locks WHERE area_id = ? AND user_id = ? AND expires_at > datetime('now')",
+		"SELECT 1 FROM edit_locks WHERE area_id = ? AND user_id = ? AND client_id = ? AND expires_at > datetime('now')",
 	)
-		.bind(areaId, user.user_id)
+		.bind(areaId, user.user_id, clientIdOf(request) ?? '')
 		.first();
 	if (!preCheckLock) {
 		return Response.json({ error: 'ロックの有効期限が切れました。区画を選び直してください' }, { status: 409 });
@@ -84,10 +84,10 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 		   AND assignee_id IS NOT NULL
 		   AND EXISTS (
 		     SELECT 1 FROM edit_locks
-		     WHERE area_id = ? AND user_id = ? AND expires_at > datetime('now')
+		     WHERE area_id = ? AND user_id = ? AND client_id = ? AND expires_at > datetime('now')
 		   )`,
 	)
-		.bind(newTotal, rate, now, row.id, areaId, user.user_id)
+		.bind(newTotal, rate, now, row.id, areaId, user.user_id, clientIdOf(request) ?? '')
 		.run();
 
 	if (updateResult.meta.changes === 0) {
@@ -161,10 +161,10 @@ export async function setAssignee(request: Request, env: RecordsEnv, user: Sessi
 		   AND (? IS NOT NULL OR distributed_total = 0)
 		   AND EXISTS (
 		     SELECT 1 FROM edit_locks
-		     WHERE area_id = ? AND user_id = ? AND expires_at > datetime('now')
+		     WHERE area_id = ? AND user_id = ? AND client_id = ? AND expires_at > datetime('now')
 		   )`,
 	)
-		.bind(assigneeId, assigneeName, termId, areaId, assigneeId, areaId, user.user_id)
+		.bind(assigneeId, assigneeName, termId, areaId, assigneeId, areaId, user.user_id, clientIdOf(request) ?? '')
 		.run();
 
 	if (result.meta.changes === 0) {
@@ -235,9 +235,9 @@ export async function setAreaManager(request: Request, env: RecordsEnv, user: Se
 		return Response.json({ error: '指定されたエリアが見つかりません' }, { status: 404 });
 	}
 
-	const lockedByName = await checkChomeAreaLocked(env, area.chome_area_id, user.user_id);
-	if (lockedByName) {
-		return Response.json({ error: `${lockedByName}さんが編集中です` }, { status: 409 });
+	const lockHolder = await checkChomeAreaLocked(env, area.chome_area_id, user.user_id, clientIdOf(request));
+	if (lockHolder) {
+		return Response.json({ error: lockedMessage(lockHolder) }, { status: 409 });
 	}
 
 	if (area.num_households === 0) {

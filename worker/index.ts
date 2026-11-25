@@ -151,7 +151,7 @@ export default {
 				return releaseLock(request, env, user);
 			}
 			if (url.pathname === '/api/locks/area-status' && request.method === 'GET') {
-				return checkAreaManagerStatus(env, url, user);
+				return checkAreaManagerStatus(request, env, url, user);
 			}
 			// GPS移動軌跡機能。/api/gps-tracks/:track_id/points と /:track_id/stop の
 			// パスパラメータ抽出のみ、/api/comments/:id と同様に正規表現マッチを使う。
