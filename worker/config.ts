@@ -39,11 +39,11 @@ const MAP_INITIAL_ZOOM = ${env.MAP_ZOOM};
 // 境界GeoJSONの配置パス（地域ごとに固有のパスを持つため差し替え不要）
 const BOUNDARY_GEOJSON_PATH = ${JSON.stringify(boundaryPath)};
 ${chomeBoundaryBlock}
-// 未担当エリアの表示（塗りつぶしなし・境界線のみ）
+// 区画の境界線（グレー塗りの区画・境界線のみ表示の区画などで共通に使う）
 const UNASSIGNED_BOUNDARY_COLOR = '#2563eb';
 const UNASSIGNED_BOUNDARY_WEIGHT = 0.525;
 
-// 担当者ありエリアの塗りつぶし（青系グラデーション）
+// 区画担当ありの区画。配布実績0は塗りつぶしなし（境界線のみ）、実績が1以上で青系グラデーションの塗り
 // 配布率がRATE_FOR_MIN_OPACITY%以下は常にMIN_FILL_OPACITYの濃さで横ばい、
 // そこからRATE_FOR_MAX_OPACITY%まで線形にMAX_FILL_OPACITYまで濃くなる。
 // opacity = MIN_FILL_OPACITY + (MAX_FILL_OPACITY - MIN_FILL_OPACITY)
@@ -51,7 +51,7 @@ const UNASSIGNED_BOUNDARY_WEIGHT = 0.525;
 const ASSIGNED_FILL_COLOR = '#2563eb';
 const ASSIGNED_BOUNDARY_COLOR = '#2563eb';
 const ASSIGNED_BOUNDARY_WEIGHT = 0.525;
-const MIN_FILL_OPACITY = 0.1; // 配布率0〜RATE_FOR_MIN_OPACITY%の間の濃度（横ばい）
+const MIN_FILL_OPACITY = 0.25; // 配布率0〜RATE_FOR_MIN_OPACITY%の間の濃度（横ばい）
 const MAX_FILL_OPACITY = 0.85; // 配布率がRATE_FOR_MAX_OPACITY以上になったときの濃度
 const RATE_FOR_MIN_OPACITY = 10; // この配布率(%)以下は濃度を上げない
 const RATE_FOR_MAX_OPACITY = 90; // この配布率(%)以上で最高濃度
@@ -69,7 +69,7 @@ const MASKED_FILL_OPACITY = 0.7;
 const ZERO_HOUSEHOLD_FILL_COLOR = '#4b5563';
 const ZERO_HOUSEHOLD_FILL_OPACITY = 0.7;
 
-// エリア担当が未設定の区画の塗り（予定配布エリア外であることを示す。グレー(中)。
+// 区画担当が未設定の区画の塗り（配布計画外であることを示す。エリア担当の有無は問わない。グレー(中)。
 // 世帯ゼロ(濃)より明るくして区別する）
 const NON_TARGET_FILL_COLOR = '#9ca3af';
 const NON_TARGET_FILL_OPACITY = 0.7;

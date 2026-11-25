@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ポスティング管理 使い方</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/help.css">
+</head>
+<body class="list-page help-page">
+<header id="header">
+  <div class="header-row">
+    <h1>使い方</h1>
+    <div class="header-actions">
+      <a href="/" id="back-link">地図に戻る</a>
+    </div>
+  </div>
+</header>
+<main class="help-main" id="top">
+  <p class="lead">このツールは、ポスティングの「どこを・誰が・何枚配ったか」を地図の上で管理します。まず基本の考え方を読み、そのあと画面上部のヘッダとメニューの各機能を確認してください。</p>
+
+  <nav class="toc" aria-label="目次">
+    <p class="toc-title">目次</p>
+    <ol>
+      <li><a href="#concepts">基本概念</a>
+        <ol>
+          <li><a href="#term">ターム</a></li>
+          <li><a href="#area">エリアと区画</a></li>
+          <li><a href="#assign">担当（エリア担当・区画担当）</a></li>
+          <li><a href="#result">実績</a></li>
+          <li><a href="#colors">地図の色の見方</a></li>
+        </ol>
+      </li>
+      <li><a href="#header-items">ヘッダの項目</a></li>
+      <li><a href="#menu">メニューの項目</a></li>
+    </ol>
+  </nav>
+
+  <!-- ================= 1. 基本概念 ================= -->
+  <section class="chapter" id="concepts">
+    <h2><span class="no">1</span>基本概念</h2>
+
+    <div class="sec" id="term">
+      <h3><span class="no">1-1</span>ターム</h3>
+      <p><span class="term">ターム</span>は、ひとまとまりの配布期間です（例：「12月第1弾」）。エリア担当・区画担当と配布実績はタームごとに記録されるので、タームが変われば地図はまっさらな状態から始まります。</p>
+      <ul>
+        <li><strong>進行中のタームは常に1つだけ</strong>です。地図を開くと進行中のタームが自動で選ばれます。</li>
+        <li>管理者が新しいタームを開始すると、それまでのタームは「（完了）」になります。</li>
+        <li>完了したタームも、ヘッダのターム選択で切り替えればいつでも見返せます。ただし<strong>閲覧専用</strong>で、担当の変更や実績の記録はできません。</li>
+      </ul>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>タームごとに記録されるもの</th><th>タームに関係なく共通のもの</th></tr></thead>
+          <tbody><tr>
+            <td>エリア担当、区画担当、配布実績、配布履歴、軌跡記録</td>
+            <td>地図コメント、投票所、区画の世帯数</td>
+          </tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="sec" id="area">
+      <h3><span class="no">1-2</span>エリアと区画</h3>
+      <p>地図は2段階の区切りで分かれています。</p>
+      <ul>
+        <li><span class="term">エリア</span>：町丁目の単位（例：中央林間一丁目）。地図上では<strong>紺色の太い線</strong>で囲まれています。エリアの線は目安として表示されるだけで、タップしても反応しません。</li>
+        <li><span class="term">区画</span>：エリアの中をさらに細かく分けた、最小の単位（国勢調査の「基本単位区」。おおむね数十世帯）。地図上では<strong>青い細い線</strong>で囲まれています。区画をタップすると、その区画の情報が表示されます。</li>
+      </ul>
+      <figure class="figure">
+        <svg viewBox="0 0 360 225" role="img" aria-label="2つのエリアがそれぞれ複数の区画に分かれている図">
+          <rect x="0" y="0" width="360" height="225" fill="var(--map-ground)" rx="6"/>
+          <text x="110" y="15" font-size="11" text-anchor="middle" fill="#1e3a8a" font-weight="700">エリア：中央林間一丁目</text>
+          <text x="265" y="15" font-size="11" text-anchor="middle" fill="#1e3a8a" font-weight="700">エリア：中央林間二丁目</text>
+          <g transform="translate(0,22)" stroke="#2563eb" stroke-width="1">
+            <polygon points="20,30 105,25 110,100 25,100" fill="#2563eb" fill-opacity="0.85"/>
+            <polygon points="105,25 190,20 195,100 110,100" fill="#2563eb" fill-opacity="0.45"/>
+            <polygon points="25,100 110,100 115,178 30,175" fill="#2563eb" fill-opacity="0.25"/>
+            <polygon points="110,100 195,100 200,180 115,178" fill="none"/>
+            <polygon points="190,20 340,35 335,110 195,100" fill="#9ca3af" fill-opacity="0.7"/>
+            <polygon points="195,100 265,105 265,183 200,180" fill="#9ca3af" fill-opacity="0.7"/>
+            <polygon points="265,105 335,110 330,185 265,183" fill="#4b5563" fill-opacity="0.7"/>
+            <g fill="none" stroke="#1e3a8a" stroke-width="3" stroke-linejoin="round">
+              <polygon points="20,30 190,20 200,180 30,175"/>
+              <polygon points="190,20 340,35 330,185 200,180"/>
+            </g>
+            <g font-size="10" stroke="none" text-anchor="middle">
+              <text x="65" y="68" fill="#ffffff">区画1</text>
+              <text x="150" y="64" fill="#111827">区画2</text>
+              <text x="70" y="142" fill="#111827">区画3</text>
+              <text x="157" y="142" fill="#111827">区画4</text>
+              <text x="265" y="70" fill="#111827">区画1</text>
+              <text x="232" y="146" fill="#111827">区画2</text>
+              <text x="298" y="150" fill="#ffffff">区画3</text>
+            </g>
+          </g>
+        </svg>
+        <figcaption>紺の太線がエリア、その中の青い細線が区画です。左のエリアは担当が決まっていて配布が進んでいる状態、右のエリアは担当が未設定（配布対象外）の状態です。色の意味は<a href="#colors">1-5 地図の色の見方</a>を参照してください。</figcaption>
+      </figure>
+      <ul>
+        <li>区画の名前は「大和市 中央林間1丁目 2区画」のように表示されます。「2区画」はこのツール独自の通し番号で、住居表示の番地とは関係ありません。</li>
+        <li>世帯数は令和2年国勢調査の実数です。<strong>世帯数が0の区画</strong>（商業地・工業地など）は担当設定・配布記録の対象外です。</li>
+        <li>地域によってはエリアの線（紺の太線）が表示されないことがあります。その場合は区画ひとつひとつがエリアとして扱われます。</li>
+      </ul>
+    </div>
+
+    <div class="sec" id="assign">
+      <h3><span class="no">1-3</span>担当（エリア担当・区画担当）</h3>
+      <p>担当には2種類あります。名前が似ていますが、設定する単位が違う別のものです。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th></th><th>エリア担当</th><th>区画担当</th></tr></thead>
+          <tbody>
+            <tr><td class="k">設定する単位</td><td>エリア（町丁目）</td><td>区画</td></tr>
+            <tr><td class="k">役割</td><td>そのエリア全体のまとめ役</td><td>その区画を実際に配る人</td></tr>
+            <tr><td class="k">タームとの関係</td><td>タームごとに設定</td><td>タームごとに設定</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h4>エリア担当を設定・解除したときの動き</h4>
+      <ul>
+        <li>エリア担当を設定すると、そのエリア内の<strong>区画担当が、同じ人に一括で置き換わります</strong>（世帯数0の区画を除く）。すでに別の人が区画担当になっている区画も上書きされます。ただし、<strong>配布実績のある区画は区画担当をそのまま残します</strong>（実際に配った人の担当を消さないため）。</li>
+        <li>そのあと、区画ごとに区画担当を別の人に変えることができます。「エリアをまず1人に任せ、一部の区画だけ他の人に振り分ける」という使い方を想定しています。</li>
+        <li>エリア担当を「未設定」にすると、そのエリア内の<strong>区画担当も未設定になり</strong>、配布の対象外になります。エリアを今回の計画から外したいときに使います。この場合も、配布実績のある区画は区画担当と実績をそのまま残します。</li>
+        <li>未設定にする前には確認が表示され、区画担当を外す区画の件数と、実績があるため残す区画の件数が示されます。</li>
+        <li>エリア担当を決めずに、区画担当だけを設定することもできます。</li>
+        <li>配布実績のある区画は、区画担当を「未担当」にできません（別の人に変えることはできます）。未担当にしたいときは、マイナスの枚数を記録して実績を0に戻してから変更します。</li>
+      </ul>
+      <h4>配布の対象になる区画</h4>
+      <p><strong>区画担当が設定されている区画</strong>を「予定配布エリア」と呼び、配布の対象とみなします。区画担当が未設定の区画は、エリア担当がいても配布の対象外で、実績を記録できません。</p>
+      <p>担当の設定は、区画をタップして表示される画面の「変更する」ボタンから行います。進行中のタームであれば、どのユーザーでも設定できます。</p>
+    </div>
+
+    <div class="sec" id="result">
+      <h3><span class="no">1-4</span>実績</h3>
+      <p><span class="term">実績</span>は、区画ごとに配った枚数の累計です。配り終えたら、その区画をタップして枚数を記録します。</p>
+      <div class="popup-wrap">
+        <div class="popup-mock" aria-label="区画をタップしたときの画面の例">
+          <div class="t">大和市 中央林間1丁目 2区画</div>
+          <div class="r"><span>エリア担当: 山田</span><button type="button" tabindex="-1">変更する</button></div>
+          <div class="r"><span>区画担当: 佐藤</span><button type="button" tabindex="-1">変更する</button></div>
+          <div class="r"><span>エリア世帯数:</span><span>412 世帯</span></div>
+          <div class="r"><span>区画世帯数:</span><span>38 世帯</span></div>
+          <div class="r"><span>エリア累計配布:</span><span>120世帯(29.1%)</span></div>
+          <div class="bar"><i style="width:29%"></i></div>
+          <div class="r"><span>区画累計配布:</span><span>20世帯(52.6%)</span></div>
+          <div class="bar"><i style="width:53%"></i></div>
+          <div class="r"><span>最終更新:</span><span>2026/11/24 15:02</span></div>
+          <div class="rec">
+            <span>今回の配布枚数: <span class="in">枚数</span></span>
+            <span class="hint">※ 負数を入力すると減算されます</span>
+            <span class="hint">記録者: 佐藤（ログイン中ユーザー）</span>
+            <span><button type="button" tabindex="-1">記録する</button></span>
+          </div>
+        </div>
+        <ol>
+          <li>地図で配り終えた区画をタップします。</li>
+          <li>「今回の配布枚数」に<strong>今回配った枚数</strong>を入力します。累計ではありません。入力した枚数がこれまでの累計に足されます。</li>
+          <li>「記録する」を押すと、累計と地図の色がすぐに更新されます。</li>
+        </ol>
+      </div>
+      <ul>
+        <li><strong>入力を間違えたとき</strong>は、マイナスの枚数（例：<code>-5</code>）を記録すると、その分だけ累計から差し引かれます。累計が0未満や区画の世帯数を超える記録はできません。</li>
+        <li>配布率は「区画累計配布 ÷ 区画世帯数」です。エリア累計配布は、エリア内の全区画を合計した値です。</li>
+        <li>記録者は<strong>ログイン中のユーザー</strong>として残ります。区画担当以外の人が代わりに記録した場合も、記録した人の名前で履歴に残ります。</li>
+        <li>次のときは記録欄が表示されません：完了したタームを表示している／世帯数0の区画／区画担当が未設定の区画。</li>
+      </ul>
+    </div>
+
+    <div class="sec" id="colors">
+      <h3><span class="no">1-5</span>地図の色の見方</h3>
+      <p>区画の塗り分けで、担当と配布の進み具合がひと目でわかります。</p>
+      <div class="legend">
+        <div class="legend-row"><div class="sw sw-grad"><i></i></div><div><b>青（濃淡あり）</b>区画担当がいて、配布実績が入っている区画。配布率が上がるほど濃くなります（10%までは薄いまま、90%以上で最も濃い）。</div></div>
+        <div class="legend-row"><div class="sw sw-none"><i></i></div><div><b>塗りなし（青い線だけ）</b>区画担当はいるが、まだ配布実績がない区画。</div></div>
+        <div class="legend-row"><div class="sw sw-gray"><i></i></div><div><b>グレー</b>区画担当が未設定で、配布の対象外の区画（エリア担当の有無は関係ありません）。担当者フィルタで特定の人を選んだときは、その人以外の区画もこの色になります。</div></div>
+        <div class="legend-row"><div class="sw sw-dark"><i></i></div><div><b>濃いグレー</b>世帯数が0の区画。いつでもこの色で、担当設定・記録はできません。</div></div>
+        <div class="legend-row"><div class="sw sw-navy"><i></i></div><div><b>紺の太い線</b>エリア（町丁目）の境目。</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 2. ヘッダ ================= -->
+  <section class="chapter" id="header-items">
+    <h2><span class="no">2</span>ヘッダの項目</h2>
+    <p class="lead">地図画面の上部（ヘッダ）にある項目です。図の番号は下の説明の番号に対応しています。スマートフォンでは画面幅に合わせて折り返して表示されます。</p>
+
+    <div class="mock-header" aria-label="ヘッダの配置図">
+      <div class="mh-row">
+        <span class="mh-item"><span class="num">1</span><span class="mh-sel">12月第1弾 ▾</span></span>
+        <span class="mh-item"><span class="num">2</span><span class="mh-badge">閲覧専用</span></span>
+        <span class="mh-item"><span class="num">3</span><span class="mh-sel">(全体表示) ▾</span></span>
+        <span class="mh-item"><span class="num">4</span><span class="mh-cb">投票所</span></span>
+        <span class="mh-item"><span class="num">5</span><span class="mh-cb">ポスト禁止</span><span class="mh-cb">ポスター候補</span><span class="mh-cb">その他</span></span>
+        <span class="mh-actions">
+          <span class="mh-btn">🔍<span class="num">6</span></span>
+          <span class="mh-btn">📍<span class="num">7</span></span>
+          <span class="mh-btn">🔴<span class="num">8</span></span>
+          <span class="mh-btn">≡<span class="num">9</span></span>
+        </span>
+      </div>
+      <div class="mh-row mh-stats">
+        <span class="num">10</span>
+        <span>全世帯数: <b>98,512</b></span>
+        <span>実績/予定枚数: <b>4,830</b>(31.2%) / <b>15,480</b>(15.7%)</span>
+      </div>
+      <div class="mh-toggle"><span class="num">11</span> ▲</div>
+    </div>
+
+    <div class="items">
+      <div class="item" id="h-term"><span class="num">1</span><div>
+        <h4>ターム選択</h4>
+        <p>地図に表示するタームを切り替えます。完了したタームには「（完了）」が付きます。</p>
+      </div></div>
+
+      <div class="item" id="h-viewonly"><span class="num">2</span><div>
+        <h4>閲覧専用</h4>
+        <p>完了したタームを選んでいるときだけ表示されます。この間は担当の変更や実績の記録はできません。</p>
+      </div></div>
+
+      <div class="item" id="h-filter"><span class="num">3</span><div>
+        <h4>担当者フィルタ</h4>
+        <ul>
+          <li><strong>(全体表示)</strong>：通常の表示です。すべての区画を<a href="#colors">担当と配布率の色</a>で塗り分けます。</li>
+          <li><strong>(地図表示)</strong>：区画の塗りを消して、境界線だけにします。道や建物を確認したいときに使います。</li>
+          <li><strong>人の名前</strong>：その人が区画担当になっている区画だけを色付きで表示し、ほかはグレーにします。<a href="#h-stats">⑩の集計</a>もその人の分だけになります。自分の担当範囲を確認するときに便利です。</li>
+        </ul>
+      </div></div>
+
+      <div class="item" id="h-polling"><span class="num">4</span><div>
+        <h4>投票所</h4>
+        <p>投票所のピン（<span class="pin" style="background:#1e3a8a"><span></span></span>紺色）の表示・非表示を切り替えます。ピンをタップすると名称と住所が表示されます。ピンに「?」が付いているものは、位置が正確でない可能性がある投票所です。</p>
+      </div></div>
+
+      <div class="item" id="h-comment"><span class="num">5</span><div>
+        <h4>コメント（ポスト禁止／ポスター候補／その他）</h4>
+        <p>地図コメントのピンを、種類ごとに表示・非表示にします。</p>
+        <ul>
+          <li><span class="pin" style="background:#dc2626"><span>X</span></span>ポスト禁止：チラシお断りの家など、配ってはいけない場所</li>
+          <li><span class="pin" style="background:#16a34a"><span>P</span></span>ポスター候補：ポスターを貼らせてもらえそうな場所</li>
+          <li><span class="pin" style="background:#f59e0b"><span>!</span></span>その他：上記以外のメモ（ピンの色を3色から選べます）</li>
+        </ul>
+        <p><strong>コメントの追加</strong>：地図上の場所を、スマートフォンでは<strong>長押し</strong>または<strong>ダブルタップ</strong>、パソコンでは<strong>ダブルクリック</strong>または<strong>右クリック</strong>します。種類を選び、必要ならメモを書いて「追加する」を押します。</p>
+        <p>ピンをタップすると内容と登録者が表示され、「編集する」「削除する」ができます。コメントはタームに関係なく共通で、どのユーザーでも編集・削除できます。</p>
+      </div></div>
+
+      <div class="item" id="h-search"><span class="num">6</span><div>
+        <h4>🔍 検索</h4>
+        <p>ヘッダに検索欄を開きます。もう一度押すと閉じます。</p>
+        <ul>
+          <li>文字を入力すると、町丁目名・投票所・コメントのメモからすぐに候補が出ます。</li>
+          <li>Enterキーまたは「検索」ボタンを押すと、住所や施設名（駅・学校・店など）も検索します。</li>
+          <li>候補をタップすると、その場所へ地図が移動します。町丁目は赤い点線で囲まれ、住所・施設は赤い丸で示されます。</li>
+        </ul>
+      </div></div>
+
+      <div class="item" id="h-gps"><span class="num">7</span><div>
+        <h4>📍 現在地</h4>
+        <p>押すと現在地を青い点で表示し、地図をその場所に移動します。表示中はボタンが青くなり、もう一度押すと消えます。初めて使うときは、ブラウザから位置情報の利用許可を求められます。</p>
+      </div></div>
+
+      <div class="item" id="h-track"><span class="num">8</span><div>
+        <h4>🔴 軌跡記録</h4>
+        <p>歩いたルートを記録します。押すと記録を開始し（ボタンが青くなります）、もう一度押すと終了します。記録中は歩いた道が<span class="track" style="background:#22c55e"></span>緑の線で地図に描かれます。</p>
+        <div class="warn">
+          <p><strong>記録は、地図画面を表示している間だけ続きます。</strong>別のアプリやタブに切り替えたり、画面を消したりすると記録は自動で終了します。続けるときは、地図画面に戻ってもう一度🔴を押してください。</p>
+          <p>記録中は画面が自動で消えないようになります。記録中は⑦の現在地ボタンは使えませんが、現在地は表示され続けます。</p>
+        </div>
+        <p>記録した軌跡は、メニューの<a href="#m-track">軌跡照会</a>や<a href="#m-summary">履歴集計</a>で確認できます。</p>
+      </div></div>
+
+      <div class="item" id="h-menu"><span class="num">9</span><div>
+        <h4>≡ メニュー</h4>
+        <p>メニューを開きます。各項目は<a href="#menu">3 メニューの項目</a>を参照してください。</p>
+      </div></div>
+
+      <div class="item" id="h-stats"><span class="num">10</span><div>
+        <h4>集計</h4>
+        <p>表示中のタームの全体の進み具合です。</p>
+        <ul>
+          <li><strong>全世帯数</strong>：地域内の全区画の世帯数の合計。</li>
+          <li><strong>予定枚数</strong>：予定配布エリア（区画担当が決まっている区画）の世帯数の合計。かっこ内は全世帯数に対する割合です。</li>
+          <li><strong>実績</strong>：予定配布エリアで記録された配布枚数の合計。かっこ内は予定枚数に対する割合（達成率）です。</li>
+        </ul>
+        <p>③の担当者フィルタで人を選ぶと、実績と予定枚数はその人の担当区画の分だけになります（全世帯数は変わりません）。</p>
+      </div></div>
+
+      <div class="item" id="h-toggle"><span class="num">11</span><div>
+        <h4>▲ ヘッダを畳む</h4>
+        <p>ヘッダ下端の▲を押すとヘッダが畳まれ、地図を広く使えます。▼を押すと元に戻ります。</p>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ================= 3. メニュー ================= -->
+  <section class="chapter" id="menu">
+    <h2><span class="no">3</span>メニューの項目</h2>
+    <p class="lead">ヘッダの ≡ を押すと開くメニューです。管理者にだけ表示される項目があります。メニューから別の画面に移っても、「地図に戻る」で元の地図の位置・表示状態に戻れます。</p>
+
+    <div class="menu-layout">
+      <div class="mock-menu" aria-label="メニューの配置図">
+        <div class="new">使い方</div>
+        <div class="adm">新ターム開始</div>
+        <div>軌跡照会</div>
+        <div>履歴一覧</div>
+        <div>履歴集計</div>
+        <div>地域マスタ一覧</div>
+        <div class="adm">投票所管理</div>
+        <div class="adm">ユーザー管理</div>
+        <div class="adm">データクリア</div>
+        <div>ログアウト</div>
+      </div>
+      <div class="menu-legend">
+        <p><span class="who who-all">全員</span> すべてのユーザーが使えます。</p>
+        <p><span class="who who-admin">管理者のみ</span> 管理者でログインしたときだけメニューに表示されます。</p>
+      </div>
+    </div>
+
+    <div class="items">
+      <div class="item item-plain" id="m-help"><div>
+        <h4>使い方 <span class="who who-all">全員</span></h4>
+        <p>このページです。</p>
+      </div></div>
+
+      <div class="item item-plain" id="m-newterm"><div>
+        <h4>新ターム開始 <span class="who who-admin">管理者のみ</span></h4>
+        <p>新しい配布期間を始めます。タームの名称を入力し、必要なら担当者を引き継ぐタームを選んで「開始する」を押します。</p>
+        <ul>
+          <li>それまで進行中だったタームは「完了」になり、閲覧専用になります。</li>
+          <li>実績は引き継がれず、0から始まります。</li>
+          <li>引き継ぎ元のタームを選ぶと、そのタームの<strong>エリア担当と区画担当</strong>がそのまま新しいタームにコピーされます。「継承しない」を選ぶと、どちらも未設定の状態から始まります。</li>
+        </ul>
+      </div></div>
+
+      <div class="item item-plain" id="m-track"><div>
+        <h4>軌跡照会 <span class="who who-all">全員</span></h4>
+        <p>記録した軌跡を地図に表示します。開始日と終了日を選んで「表示」を押します。期間を選ぶと、記録の累計時間と移動距離も表示されます。</p>
+        <ul>
+          <li>当日の軌跡は<span class="track" style="background:#22c55e"></span>緑、前日以前の軌跡は<span class="track" style="background:#fb923c"></span>オレンジで表示されます。線をタップすると、記録した人と開始・終了時刻が表示されます。</li>
+          <li>「消去」を押すと地図から軌跡の表示を消します（記録データは消えません）。</li>
+          <li>一般ユーザーは自分の軌跡だけを見られます。管理者は全員分、または対象ユーザーを選んで見られます。</li>
+        </ul>
+      </div></div>
+
+      <div class="item item-plain" id="m-history"><div>
+        <h4>履歴一覧 <span class="who who-all">全員</span></h4>
+        <p>配布実績の記録を新しい順に一覧で表示します。記録日時・ターム・地域・記録者（記録した人）・増減枚数がわかります。タームで絞り込めて、「CSVダウンロード」で表計算ソフト用のファイルとして保存できます。</p>
+      </div></div>
+
+      <div class="item item-plain" id="m-summary"><div>
+        <h4>履歴集計 <span class="who who-all">全員</span></h4>
+        <p>期間を指定して、メンバーごとの配布枚数・軌跡の記録時間・移動距離を集計します。最下行は全員の合計です。配布枚数は、実績を<strong>記録した人</strong>ごとに集計されます。</p>
+      </div></div>
+
+      <div class="item item-plain" id="m-areas"><div>
+        <h4>地域マスタ一覧 <span class="who who-all">全員</span></h4>
+        <p>地域内のすべての区画の一覧です。区画ごとの町丁目・世帯数と、進行中タームのエリア担当・区画担当・配布数・配布率が並びます。「CSVダウンロード」でファイルとして保存できます。</p>
+      </div></div>
+
+      <div class="item item-plain" id="m-polling"><div>
+        <h4>投票所管理 <span class="who who-admin">管理者のみ</span></h4>
+        <p>登録されている投票所の一覧（名称・住所・緯度経度・要確認）を表示します。CSVファイルをアップロードして一括登録することもできます。</p>
+        <div class="warn"><p>CSVをアップロードすると、<strong>今ある投票所はすべてCSVの内容で置き換わります</strong>（追加ではありません）。</p></div>
+      </div></div>
+
+      <div class="item item-plain" id="m-users"><div>
+        <h4>ユーザー管理 <span class="who who-admin">管理者のみ</span></h4>
+        <p>ユーザーの一覧（ユーザーID・氏名・権限・ログイン可否）を表示します。ユーザーの追加や修正はCSVで行います。</p>
+        <ol>
+          <li>「CSVダウンロード」で現在の一覧を保存します。</li>
+          <li>表計算ソフトで編集します。新しい人は行を追加します。権限は「管理者」か「一般」、ログイン可否は 1（可）か 0（不可）です。</li>
+          <li>「アップロードして反映」で取り込みます。ユーザーIDが既にあれば上書き、なければ追加されます。</li>
+        </ol>
+        <p>合言葉（passphrase）の欄は、ダウンロード時は常に空欄です。空欄のままアップロードすると、その人の合言葉は変わりません。新しく追加する人は合言葉の入力が必要です。</p>
+      </div></div>
+
+      <div class="item item-plain" id="m-clear"><div>
+        <h4>データクリア <span class="who who-admin">管理者のみ</span></h4>
+        <p>タームを丸ごと削除します。</p>
+        <div class="warn">
+          <p>削除すると、そのタームのエリア担当・区画担当・配布実績・配布履歴・軌跡記録がすべて消えます。ほかのタームのデータや、区画の境界・世帯数は残ります。</p>
+          <p><strong>この操作は取り消せません。</strong></p>
+        </div>
+      </div></div>
+
+      <div class="item item-plain" id="m-logout"><div>
+        <h4>ログアウト <span class="who who-all">全員</span></h4>
+        <p>ログイン画面に戻ります。共用の端末を使ったときは、使い終わったら必ずログアウトしてください。</p>
+      </div></div>
+    </div>
+  </section>
+</main>
+<script>
+// 他の一覧ページと同じく、未ログインならログイン画面へ戻す（ページ自体はデータを読み込まない）
+if (!sessionStorage.getItem('bm_posting_session')) location.href = '/login.html';
+</script>
+</body>
+</html>

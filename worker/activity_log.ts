@@ -43,7 +43,7 @@ export async function listActivityLog(env: ActivityLogEnv, termId: string | null
 export async function exportActivityLogCsv(env: ActivityLogEnv, termId: string | null): Promise<Response> {
 	const rows = await queryActivityLog(env, termId);
 	const csv = toCsv(
-		['log_id', '記録日時', 'ターム', 'area_id', '市区町村', '区', '町丁目', '丁目', '区画', '担当者ID', '担当者名', '増減枚数'],
+		['log_id', '記録日時', 'ターム', 'area_id', '市区町村', '区', '町丁目', '丁目', '区画', '記録者ID', '記録者名', '増減枚数'],
 		rows.map((r) => [
 			r.log_id,
 			r.updated_at,

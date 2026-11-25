@@ -66,8 +66,8 @@ async function loadTerms() {
 
 async function deleteTerm(termId, termName) {
 	const ok = confirm(
-		`「${termName}」を削除します。このタームの担当者・配布実績・配布履歴に加えて、` +
-			`全区画のエリア担当（マスタ側の設定）もあわせて初期化されます。元に戻せません。よろしいですか？`,
+		`「${termName}」を削除します。このタームのエリア担当・区画担当・配布実績・配布履歴・軌跡記録が` +
+			`すべて削除されます（ほかのタームには影響しません）。元に戻せません。よろしいですか？`,
 	);
 	if (!ok) return;
 

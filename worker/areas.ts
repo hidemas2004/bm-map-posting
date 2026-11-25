@@ -14,8 +14,6 @@ interface AreaRow {
 	chome_area_id: string;
 	block: string;
 	num_households: number;
-	area_manager_id: string | null;
-	area_manager_name: string;
 }
 
 export async function listAreas(env: AreasEnv): Promise<Response> {
@@ -29,13 +27,15 @@ interface CurrentTerm {
 }
 
 interface AreaWithCurrentTerm extends AreaRow {
+	area_manager_id: string | null;
+	area_manager_name: string;
 	assignee_name: string;
 	distributed_total: number;
 	distribution_rate: number;
 }
 
 /**
- * 地域マスタに、現在進行中タームの担当・配布数・配布率を付加する。
+ * 地域マスタに、現在進行中タームのエリア担当・区画担当・配布数・配布率を付加する。
  * 進行中タームが無い場合、または area が現タームの term_data 行を持たない場合
  * （タームより後に追加された地域など）は 0/0/未担当 として扱う。
  */
@@ -43,22 +43,39 @@ async function areasWithCurrentTermStats(
 	env: AreasEnv,
 ): Promise<{ areas: AreaWithCurrentTerm[]; term: CurrentTerm | null }> {
 	const [{ results: areaRows }, term] = await Promise.all([
-		env.DB.prepare('SELECT * FROM areas ORDER BY area_id').all<AreaRow>(),
+		// areas.area_manager_* は旧仕様の残置列（エリア担当はterm_data側に移行済み）のため取得しない
+		env.DB.prepare(
+			'SELECT area_id, city, ward, town, chome, chome_area_id, block, num_households FROM areas ORDER BY area_id',
+		).all<AreaRow>(),
 		env.DB.prepare("SELECT term_id, term_name FROM terms WHERE status = '進行中'").first<CurrentTerm>(),
 	]);
 
 	if (!term) {
 		return {
-			areas: areaRows.map((area) => ({ ...area, assignee_name: '', distributed_total: 0, distribution_rate: 0 })),
+			areas: areaRows.map((area) => ({
+				...area,
+				area_manager_id: null,
+				area_manager_name: '',
+				assignee_name: '',
+				distributed_total: 0,
+				distribution_rate: 0,
+			})),
 			term: null,
 		};
 	}
 
 	const { results: termDataRows } = await env.DB.prepare(
-		'SELECT area_id, assignee_name, distributed_total, distribution_rate FROM term_data WHERE term_id = ?',
+		'SELECT area_id, area_manager_id, area_manager_name, assignee_name, distributed_total, distribution_rate FROM term_data WHERE term_id = ?',
 	)
 		.bind(term.term_id)
-		.all<{ area_id: string; assignee_name: string; distributed_total: number; distribution_rate: number }>();
+		.all<{
+			area_id: string;
+			area_manager_id: string | null;
+			area_manager_name: string;
+			assignee_name: string;
+			distributed_total: number;
+			distribution_rate: number;
+		}>();
 
 	const statByAreaId = new Map(termDataRows.map((row) => [row.area_id, row]));
 
@@ -66,6 +83,8 @@ async function areasWithCurrentTermStats(
 		const stat = statByAreaId.get(area.area_id);
 		return {
 			...area,
+			area_manager_id: stat?.area_manager_id ?? null,
+			area_manager_name: stat?.area_manager_name ?? '',
 			assignee_name: stat?.assignee_name ?? '',
 			distributed_total: stat?.distributed_total ?? 0,
 			distribution_rate: stat?.distribution_rate ?? 0,
@@ -92,7 +111,7 @@ export async function exportAreasCsv(env: AreasEnv): Promise<Response> {
 		area.chome_area_id,
 		area.block,
 		area.num_households,
-		area.area_manager_id || area.assignee_name ? 1 : 0,
+		area.assignee_name ? 1 : 0, // 配布計画の対象＝区画担当が設定済み（worker/records.ts と同じ判定）
 		area.area_manager_name,
 		area.assignee_name,
 		area.distributed_total,

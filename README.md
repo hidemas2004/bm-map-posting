@@ -40,8 +40,8 @@
   不具合があったため issue#12 で変更した（`migrations/0004_chome_area_id.sql`、
   `scripts/backfill-chome-area-id.mjs`）。
 - 地図画面（`public/index.html` / `app.js`）のヘッダは選択タームの全体集計（世帯数・配布数・
-  配布率）と担当者フィルタ（`(全体表示)` / `(担当者未決)` / 各担当者）を表示する。担当者フィルタで
-  選択中以外のエリアは濃い灰色でマスクされる。世帯数0のエリア（2026-08-05時点で172地域。基本単位区
+  配布率）と担当者フィルタ（`(地図表示)` / `(全体表示)` / 各担当者）を表示する。担当者フィルタで
+  選択中以外の区画は灰色でマスクされる。世帯数0のエリア（2026-08-05時点で172地域。基本単位区
   レベルでは商業地・工業地等が単独の区画になるケースが増えるため、丁目単位の頃より件数・比率が
   大きい）はゼロ除算を避けるため担当者設定・配布記録の対象外とし、常時グレー表示（フロント・
   バックエンド`worker/records.ts`の両方でガード）。ヘッダはクリック（select/button以外の部分）
@@ -71,6 +71,8 @@ npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0009_gps_tracks.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0010_gps_tracks_term_id.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0011_gps_tracks_distance.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0012_term_area_manager.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0013_edit_locks.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=regions/14213-yamato/areas.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=seed/users.sql
 ```
@@ -122,19 +124,58 @@ curl -X POST https://<デプロイ先ホスト>/api/areas/import \
 配布実績の変更履歴（`activity_log`）と地域マスタ（`areas`）は、それぞれ画面上での一覧表示に加え、
 CSVダウンロードに対応している（スプレッドシートでの目視確認・手元バックアップ用途を想定）。
 
-- **`public/history.html`**（メニューの「履歴一覧」）: いつ・誰が・どのエリアで何枚増減したかの
-  時系列ログ。タームで絞り込み可能。`GET /api/activity-log?term_id=<id>`（`term_id`省略で全ターム）
+- **`public/history.html`**（メニューの「履歴一覧」）: いつ・誰が（記録者＝記録したログインユーザー。
+  区画担当とは限らない）・どの区画で何枚増減したかの時系列ログ。タームで絞り込み可能。`GET /api/activity-log?term_id=<id>`（`term_id`省略で全ターム）
   と `GET /api/activity-log/export?term_id=<id>`（同内容のCSV）。
-- **`public/areas.html`**（メニューの「地域マスタ一覧」）: `area_id`・市区町村・町丁目・区画・世帯数に加え、
-  **直近5タームぶんの配布数・配布率**を横持ちの列として表示（`GET /api/areas/with-terms`）。
-  対象タームが増減しても列は自動で追従する。CSVエクスポート（`GET /api/areas/export`）も同じ列構成。
-  単純な地域一覧だけが欲しい場合は従来通り `GET /api/areas`（term列なし）も残してある。
+- **`public/areas.html`**（メニューの「地域マスタ一覧」）: 町丁目・区画・世帯数に加え、
+  **進行中タームのエリア担当・区画担当・配布数・配布率**を表示（`GET /api/areas/with-terms`。進行中
+  タームが無ければ空欄・0）。CSVエクスポート（`GET /api/areas/export`）は`area_id`等の列も含む。
+  「対象」列は区画担当が設定済み（＝配布計画の対象）かどうか。単純な地域一覧だけが欲しい場合は
+  `GET /api/areas`（term列なし）も残してある（`areas.area_manager_*`は旧仕様の残置列で、現在の
+  エリア担当ではない点に注意）。
 - CSVはUTF-8 BOM付き・CRLF改行（Excelでの文字化け対策）。ダウンロードはセッショントークンを
   `Authorization`ヘッダで送る必要があるため、単純な`<a href>`ではなく`fetch`→Blob→
   `URL.createObjectURL`で実装している（`public/history.js` / `public/areas.js`）。
 - 上記いずれもセッション認証必須（管理者に限らず全ログインユーザーが閲覧可）。
 - **未対応**: データの直接編集・削除（記録の取消のみなら、逆方向deltaを`POST /api/record`で
   追記すれば実質的に補正できるが、それを行うUIはまだ無い）。
+
+## エリア担当・区画担当と配布計画（2026-11、migrations/0012で変更）
+
+- **エリア担当・区画担当はどちらもターム単位**の計画情報で、`term_data`の`area_manager_id/name`・
+  `assignee_id/name`に区画行ごとに持つ（エリア担当は同一ターム・同一エリア〈`chome_area_id`〉内の
+  全区画に同じ値を複製）。旧仕様ではエリア担当を`areas.area_manager_*`（全ターム共通）に1つだけ
+  持っていたが、タームごとに管理すべき情報のため`migrations/0012_term_area_manager.sql`で移行した
+  （移行時点の`areas`の値を全タームへコピー）。`areas.area_manager_*`列は外部キー制約付きでSQLiteでは
+  DROPできないため残置しているが、参照・更新はしない。
+- **配布計画の対象（予定配布エリア）＝区画担当が設定済みの区画**（エリア担当の有無は問わない）。
+  区画担当が未設定の区画は配布記録不可・ヘッダ集計対象外。
+- **不変条件: 配布実績が1以上の区画には必ず区画担当がいる。** 以下で保証している（`worker/records.ts`）。
+  - `recordDistribution`: 区画担当が未設定の区画への記録を拒否。
+  - `setAssignee`: 実績が1以上の区画を未担当にする操作を拒否（実績を0に戻せば可）。
+  - `setAreaManager`: エリア担当を設定するとエリア内の区画担当をその人に、未設定にすると区画担当も
+    未設定に一括上書きする（エリアを配布計画外にする運用のため）。ただし**実績が1以上の区画は
+    どちらの場合も区画担当・実績を残す**。進行中タームのみ変更可（`term_id`必須）。
+- **地図の塗り**（`public/app.js`の`styleForArea`。色・濃度は`worker/config.ts`）:
+  世帯数0＝濃いグレー／区画担当なし＝グレー／区画担当あり・実績0＝塗りなし／実績あり＝青
+  （配布率10%以下は透明度25%で横ばい、90%で最濃）。
+- 新ターム開始で引き継ぎ元タームを選ぶと、エリア担当・区画担当の両方をコピーする（実績は0から）。
+- データクリア（ターム削除）はそのタームの`term_data`ごと削除するため、他タームのエリア担当には
+  影響しない（旧仕様では全区画のエリア担当を初期化していた）。
+- 利用者向けの説明はメニューの「使い方」（`public/help.html`・`public/help.css`）にある。
+  仕様を変えた場合はこちらも合わせて更新すること。
+
+## 区画編集の排他制御（編集ロック）
+
+複数人が同一区画・エリアを同時に編集して後勝ちで上書きする事故を防ぐため、区画単位のTTL付き
+編集ロック（`edit_locks`テーブル、`migrations/0013_edit_locks.sql`、API本体は`worker/locks.ts`）を持つ。
+区画のポップアップを開くとロックを取得し（他人が保持中なら「◯◯さんが編集中です」の読み取り専用表示）、
+10秒間隔のハートビートで延長、閉じると解放する（TTL 30秒で自然失効）。配布実績記録・区画担当変更は
+ロック所有をUPDATE文の条件に含め、エリア担当変更はエリア内に他人のロックがあれば拒否する。
+
+**本番反映状況（2026-11-26時点）: 未反映。** `0013_edit_locks.sql`はどの地域のD1にも未適用。
+このコードをデプロイする前に、必ず対象地域へ`0013`を適用すること（テーブルが無いと区画のポップアップ・
+書き込みAPIがすべてエラーになる）。
 
 ## ユーザーマスタの管理（CSVインポート/エクスポート、管理者限定）
 
@@ -468,6 +509,17 @@ npx wrangler deploy
 ```bash
 npx wrangler d1 execute bm-posting-db --remote --file=migrations/0006_polling_stations.sql
 npx wrangler deploy
+```
+
+### エリア担当のターム単位化（migrations/0012、2026-11-25〜26に全6地域で実施した記録）
+
+`term_data`への列追加＋既存値のコピーのみ（データ削除なし）。**この列を読むコードを先にデプロイすると
+壊れるため、必ずマイグレーション適用→デプロイの順に行う。**
+
+```bash
+npx wrangler d1 export bm-posting-db-<地域ID> --env <地域ID> --remote --output=<バックアップ先>.sql
+npx wrangler d1 execute bm-posting-db-<地域ID> --env <地域ID> --remote --file=migrations/0012_term_area_manager.sql
+npx wrangler deploy --env <地域ID>
 ```
 
 ### 新規環境の初回構築手順

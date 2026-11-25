@@ -120,6 +120,24 @@
         "MAP_ZOOM": 13,
         "HAS_CHOME_BOUNDARY": true
       }
+    },
+    "14205-fujisawa": {
+      "name": "bm-map-posting-14205-fujisawa",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bm-posting-db-14205-fujisawa",
+          "database_id": "3796277d-44d6-4124-b71f-d69350cde0bc"
+        }
+      ],
+      "vars": {
+        "REGION_ID": "14205-fujisawa",
+        "REGION_DISPLAY_NAME": "藤沢市",
+        "MAP_CENTER_LAT": 35.3632,
+        "MAP_CENTER_LNG": 139.4556,
+        "MAP_ZOOM": 13,
+        "HAS_CHOME_BOUNDARY": true
+      }
     }
   }
 }
