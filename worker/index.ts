@@ -3,7 +3,6 @@ import { exportUsersCsv, importUsers, listActiveUsers, listUsers, type UsersEnv 
 import { exportAreasCsv, importAreas, listAreas, listAreasWithCurrentTerm, type AreasEnv } from './areas';
 import { createNewTerm, getTermData, listTerms, type TermsEnv } from './terms';
 import { recordDistribution, setAreaManager, setAssignee, type RecordsEnv } from './records';
-import { acquireLock, checkAreaManagerStatus, releaseLock, type LocksEnv } from './locks';
 import { exportActivityLogCsv, listActivityLog, type ActivityLogEnv } from './activity_log';
 import { deleteTerm, type ResetEnv } from './reset';
 import { importPollingStations, listPollingStations, type PollingStationsEnv } from './polling_stations';
@@ -18,7 +17,6 @@ export interface Env
 		AreasEnv,
 		TermsEnv,
 		RecordsEnv,
-		LocksEnv,
 		ActivityLogEnv,
 		ResetEnv,
 		PollingStationsEnv,
@@ -144,15 +142,6 @@ export default {
 			if (url.pathname === '/api/record' && request.method === 'POST') {
 				return recordDistribution(request, env, user);
 			}
-			if (url.pathname === '/api/locks/acquire' && request.method === 'POST') {
-				return acquireLock(request, env, user);
-			}
-			if (url.pathname === '/api/locks/release' && request.method === 'POST') {
-				return releaseLock(request, env, user);
-			}
-			if (url.pathname === '/api/locks/area-status' && request.method === 'GET') {
-				return checkAreaManagerStatus(env, url, user);
-			}
 			// GPS移動軌跡機能。/api/gps-tracks/:track_id/points と /:track_id/stop の
 			// パスパラメータ抽出のみ、/api/comments/:id と同様に正規表現マッチを使う。
 			const trackPointsMatch = url.pathname.match(/^\/api\/gps-tracks\/(\d+)\/points$/);
@@ -170,10 +159,10 @@ export default {
 				return queryTracks(env, user, url);
 			}
 			if (url.pathname === '/api/assignee' && request.method === 'POST') {
-				return setAssignee(request, env, user);
+				return setAssignee(request, env);
 			}
 			if (url.pathname === '/api/area-manager' && request.method === 'POST') {
-				return setAreaManager(request, env, user);
+				return setAreaManager(request, env);
 			}
 			if (url.pathname === '/api/term/delete' && request.method === 'POST') {
 				const admin = await requireAdmin(request, env);
