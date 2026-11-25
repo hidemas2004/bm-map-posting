@@ -11,7 +11,7 @@ export async function getTermData(env: TermsEnv, termId: string): Promise<Respon
 	const { results } = await env.DB.prepare(
 		`SELECT
 			areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.chome_area_id, areas.block, areas.num_households,
-			areas.area_manager_id, areas.area_manager_name,
+			term_data.area_manager_id, term_data.area_manager_name,
 			term_data.assignee_id, term_data.assignee_name, term_data.distributed_total,
 			term_data.distribution_rate, term_data.last_updated_at
 		FROM term_data
@@ -26,9 +26,9 @@ export async function getTermData(env: TermsEnv, termId: string): Promise<Respon
 
 /**
  * 現行タームを完了にし、新タームを作成する（管理者のみ呼び出し想定）。
- * `inheritFromTermId` を指定した場合、新タームの担当者(term_data.assignee_id/name)を
- * そのタームの現在の設定からコピーする（区画がinheritFromTermId側に存在しない場合は
- * 未設定のまま）。配布実績(distributed_total/distribution_rate/last_updated_at)は
+ * `inheritFromTermId` を指定した場合、新タームのエリア担当(term_data.area_manager_id/name)・
+ * 区画担当(term_data.assignee_id/name)を、そのタームの現在の設定からコピーする（区画が
+ * inheritFromTermId側に存在しない場合は未設定のまま）。配布実績(distributed_total/distribution_rate/last_updated_at)は
  * 継承対象外で、常に0/0/NULLで開始する。未指定時は全区画ゼロクリア状態で作成する（従来動作）。
  */
 export async function createNewTerm(
@@ -64,8 +64,8 @@ export async function createNewTerm(
 
 	if (inheritFromTermId) {
 		await env.DB.prepare(
-			`INSERT INTO term_data (term_id, area_id, assignee_id, assignee_name, distributed_total, distribution_rate, last_updated_at)
-			 SELECT ?, areas.area_id, src.assignee_id, COALESCE(src.assignee_name, ''), 0, 0, NULL
+			`INSERT INTO term_data (term_id, area_id, area_manager_id, area_manager_name, assignee_id, assignee_name, distributed_total, distribution_rate, last_updated_at)
+			 SELECT ?, areas.area_id, src.area_manager_id, COALESCE(src.area_manager_name, ''), src.assignee_id, COALESCE(src.assignee_name, ''), 0, 0, NULL
 			 FROM areas
 			 LEFT JOIN term_data src ON src.area_id = areas.area_id AND src.term_id = ?`,
 		)
@@ -73,8 +73,8 @@ export async function createNewTerm(
 			.run();
 	} else {
 		await env.DB.prepare(
-			`INSERT INTO term_data (term_id, area_id, assignee_id, assignee_name, distributed_total, distribution_rate, last_updated_at)
-			 SELECT ?, area_id, NULL, '', 0, 0, NULL FROM areas`,
+			`INSERT INTO term_data (term_id, area_id, area_manager_id, area_manager_name, assignee_id, assignee_name, distributed_total, distribution_rate, last_updated_at)
+			 SELECT ?, area_id, NULL, '', NULL, '', 0, 0, NULL FROM areas`,
 		)
 			.bind(newTermId)
 			.run();

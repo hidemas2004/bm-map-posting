@@ -28,7 +28,7 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	}
 
 	const row = await env.DB.prepare(
-		`SELECT term_data.id, term_data.distributed_total, term_data.assignee_id, areas.num_households, areas.area_manager_id
+		`SELECT term_data.id, term_data.distributed_total, term_data.assignee_id, areas.num_households
 		 FROM term_data JOIN areas ON areas.area_id = term_data.area_id
 		 WHERE term_data.term_id = ? AND term_data.area_id = ?`,
 	)
@@ -38,7 +38,6 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 			distributed_total: number;
 			assignee_id: string | null;
 			num_households: number;
-			area_manager_id: string | null;
 		}>();
 
 	if (!row) {
@@ -47,8 +46,10 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	if (row.num_households === 0) {
 		return Response.json({ error: '世帯数が0のためこのエリアは配布記録の対象外です' }, { status: 400 });
 	}
-	if (!row.area_manager_id && !row.assignee_id) {
-		return Response.json({ error: 'エリア担当・区画担当のいずれも未設定のためこのエリアは配布記録の対象外です' }, { status: 400 });
+	// 配布計画の対象＝区画担当が設定済みの区画（エリア担当の有無は問わない）。
+	// 「実績が1以上の区画には必ず区画担当がいる」不変条件の片側（もう片側は setAssignee / setAreaManager）。
+	if (!row.assignee_id) {
+		return Response.json({ error: '区画担当が未設定のためこの区画は配布記録の対象外です' }, { status: 400 });
 	}
 
 	const newTotal = row.distributed_total + delta;
@@ -62,21 +63,25 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	const now = new Date().toISOString();
 	const rate = Math.round((newTotal / row.num_households) * 100 * 10) / 10;
 
+	// 上の判定後に区画担当が外された場合に実績だけが残らないよう、更新時にも区画担当の存在を条件にする
+	const updateResult = await env.DB.prepare(
+		'UPDATE term_data SET distributed_total = ?, distribution_rate = ?, last_updated_at = ? WHERE id = ? AND assignee_id IS NOT NULL',
+	)
+		.bind(newTotal, rate, now, row.id)
+		.run();
+	if (updateResult.meta.changes === 0) {
+		return Response.json({ error: '区画担当が未設定のためこの区画は配布記録の対象外です' }, { status: 400 });
+	}
+
 	await env.DB.prepare(
 		'INSERT INTO activity_log (term_id, area_id, updated_at, user_id, user_name, delta) VALUES (?, ?, ?, ?, ?, ?)',
 	)
 		.bind(termId, areaId, now, user.user_id, user.name, delta)
 		.run();
 
-	await env.DB.prepare(
-		'UPDATE term_data SET distributed_total = ?, distribution_rate = ?, last_updated_at = ? WHERE id = ?',
-	)
-		.bind(newTotal, rate, now, row.id)
-		.run();
-
 	const updated = await env.DB.prepare(
 		`SELECT areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.chome_area_id, areas.block, areas.num_households,
-			areas.area_manager_id, areas.area_manager_name,
+			term_data.area_manager_id, term_data.area_manager_name,
 			term_data.assignee_id, term_data.assignee_name, term_data.distributed_total,
 			term_data.distribution_rate, term_data.last_updated_at
 		 FROM term_data JOIN areas ON areas.area_id = term_data.area_id
@@ -121,19 +126,30 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 		assigneeName = assignee.name;
 	}
 
+	// 実績が1以上の区画は区画担当を未担当にできない（実績を0に戻してからなら可）。
+	// 判定と更新の間に実績が記録されても不変条件が崩れないよう、UPDATEの条件に含める。
 	const result = await env.DB.prepare(
-		'UPDATE term_data SET assignee_id = ?, assignee_name = ? WHERE term_id = ? AND area_id = ?',
+		'UPDATE term_data SET assignee_id = ?, assignee_name = ? WHERE term_id = ? AND area_id = ? AND (? IS NOT NULL OR distributed_total = 0)',
 	)
-		.bind(assigneeId, assigneeName, termId, areaId)
+		.bind(assigneeId, assigneeName, termId, areaId, assigneeId)
 		.run();
 
 	if (result.meta.changes === 0) {
+		const exists = await env.DB.prepare('SELECT distributed_total FROM term_data WHERE term_id = ? AND area_id = ?')
+			.bind(termId, areaId)
+			.first<{ distributed_total: number }>();
+		if (exists) {
+			return Response.json(
+				{ error: '配布実績がある区画は区画担当を未担当にできません（実績を0に戻すと未担当にできます）' },
+				{ status: 400 },
+			);
+		}
 		return Response.json({ error: '指定されたターム・エリアの組み合わせが見つかりません' }, { status: 404 });
 	}
 
 	const updated = await env.DB.prepare(
 		`SELECT areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.chome_area_id, areas.block, areas.num_households,
-			areas.area_manager_id, areas.area_manager_name,
+			term_data.area_manager_id, term_data.area_manager_name,
 			term_data.assignee_id, term_data.assignee_name, term_data.distributed_total,
 			term_data.distribution_rate, term_data.last_updated_at
 		 FROM term_data JOIN areas ON areas.area_id = term_data.area_id
@@ -146,21 +162,34 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 }
 
 /**
- * エリア担当（chome_area_id単位。boundary_chome.geojsonの境界ポリゴンに対応）を設定する。
- * 同一エリア内の全区画（世帯数0を含む）の area_manager_id/area_manager_name を一括更新し、
- * エリア担当を設定した場合はさらに現在進行中タームの担当者(term_data.assignee)を、
- * 同一エリア内の全区画（世帯数>0のもの）へ一括反映する（既に担当者が設定されている区画も上書きする）。
- * エリア担当を未設定(null)に戻す場合は area_manager のみ更新し、担当者の一括反映は行わない。
+ * エリア担当（chome_area_id単位。boundary_chome.geojsonの境界ポリゴンに対応）を、指定タームについて設定する。
+ * エリア担当はタームごとの計画情報で、term_data に区画行ごとに複製して持つ（migrations/0012_term_area_manager.sql）。
+ *   - 指定ターム・同一エリア内の全区画（世帯数0を含む）の term_data.area_manager_id/name を一括更新する。
+ *   - あわせて同一エリア内の区画（世帯数>0、かつ配布実績0のもの）の区画担当(term_data.assignee)も
+ *     一括で上書きする。エリア担当を設定した場合はその人に、未設定(null)にした場合は区画担当も未設定にする
+ *     （エリアを配布計画外にする運用のため。既存の区画担当の個別設定も上書きされる）。
+ *   - 配布実績が1以上の区画は、区画担当・実績ともそのまま残す（実際に配った人の担当を消さないため。
+ *     また「実績が1以上の区画には必ず区画担当がいる」不変条件を保つため。recordDistribution参照）。
+ * 完了タームの計画を書き換えないよう、進行中タームのみ受け付ける。
  */
 export async function setAreaManager(request: Request, env: RecordsEnv): Promise<Response> {
 	const body = await request
-		.json<{ area_id?: string; area_manager_id?: string | null }>()
-		.catch(() => ({}) as { area_id?: string; area_manager_id?: string | null });
+		.json<{ term_id?: number; area_id?: string; area_manager_id?: string | null }>()
+		.catch(() => ({}) as { term_id?: number; area_id?: string; area_manager_id?: string | null });
+	const termId = Number(body.term_id);
 	const areaId = String(body.area_id ?? '');
 	const areaManagerId = body.area_manager_id ?? null;
 
-	if (!areaId) {
-		return Response.json({ error: 'area_id を指定してください' }, { status: 400 });
+	if (!termId || !areaId) {
+		return Response.json({ error: 'term_id, area_id を指定してください' }, { status: 400 });
+	}
+
+	const term = await env.DB.prepare('SELECT status FROM terms WHERE term_id = ?').bind(termId).first<{ status: string }>();
+	if (!term) {
+		return Response.json({ error: '指定されたタームが見つかりません' }, { status: 404 });
+	}
+	if (term.status !== '進行中') {
+		return Response.json({ error: '完了したタームのエリア担当は変更できません' }, { status: 400 });
 	}
 
 	const area = await env.DB.prepare('SELECT chome_area_id, num_households FROM areas WHERE area_id = ?')
@@ -184,24 +213,19 @@ export async function setAreaManager(request: Request, env: RecordsEnv): Promise
 		areaManagerName = manager.name;
 	}
 
-	await env.DB.prepare('UPDATE areas SET area_manager_id = ?, area_manager_name = ? WHERE chome_area_id = ?')
-		.bind(areaManagerId, areaManagerName, area.chome_area_id)
-		.run();
-
-	if (areaManagerId) {
-		const activeTerm = await env.DB.prepare("SELECT term_id FROM terms WHERE status = '進行中'").first<{
-			term_id: number;
-		}>();
-		if (activeTerm) {
-			await env.DB.prepare(
-				`UPDATE term_data SET assignee_id = ?, assignee_name = ?
-				 WHERE term_id = ?
-				   AND area_id IN (SELECT area_id FROM areas WHERE chome_area_id = ? AND num_households > 0)`,
-			)
-				.bind(areaManagerId, areaManagerName, activeTerm.term_id, area.chome_area_id)
-				.run();
-		}
-	}
+	await env.DB.batch([
+		env.DB.prepare(
+			`UPDATE term_data SET area_manager_id = ?, area_manager_name = ?
+			 WHERE term_id = ?
+			   AND area_id IN (SELECT area_id FROM areas WHERE chome_area_id = ?)`,
+		).bind(areaManagerId, areaManagerName, termId, area.chome_area_id),
+		env.DB.prepare(
+			`UPDATE term_data SET assignee_id = ?, assignee_name = ?
+			 WHERE term_id = ?
+			   AND distributed_total = 0
+			   AND area_id IN (SELECT area_id FROM areas WHERE chome_area_id = ? AND num_households > 0)`,
+		).bind(areaManagerId, areaManagerName, termId, area.chome_area_id),
+	]);
 
 	const { results: updatedAreas } = await env.DB.prepare('SELECT area_id FROM areas WHERE chome_area_id = ?')
 		.bind(area.chome_area_id)

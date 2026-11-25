@@ -124,6 +124,11 @@ function matchesAssigneeFilter(row, filter) {
 	return row.assignee_id === filter;
 }
 
+/** 配布計画の対象（予定配布エリア）か。区画担当が設定済みの区画のみが対象（worker/records.ts と同じ判定）。 */
+function isPlannedRow(row) {
+	return Boolean(row.assignee_id);
+}
+
 function styleForArea(areaId) {
 	if (state.assigneeFilter === MAP_VIEW_FILTER) {
 		return {
@@ -152,8 +157,7 @@ function styleForArea(areaId) {
 		};
 	}
 
-	// 担当者フィルタで特定の担当者が選ばれている場合、その担当者以外のエリアは
-	// （エリア担当未設定=黄色 のエリアも含めて）すべて世帯ゼロと同じ濃さのグレーにする。
+	// 担当者フィルタで特定の担当者が選ばれている場合、その担当者以外の区画はすべてグレーでマスクする。
 	if (!matchesAssigneeFilter(row, state.assigneeFilter)) {
 		return {
 			color: UNASSIGNED_BOUNDARY_COLOR,
@@ -163,8 +167,9 @@ function styleForArea(areaId) {
 		};
 	}
 
-	// エリア担当・区画担当がともに未設定の区画は予定配布エリア外。フィルタ状態に関わらず常にグレー固定。
-	if (!row.area_manager_id && !row.assignee_id) {
+	// 区画担当が未設定の区画は配布計画外（エリア担当の有無は問わない）。フィルタ状態に関わらず常にグレー固定。
+	// サーバー側で「実績が1以上の区画には必ず区画担当がいる」ことを保証しているため、ここに実績のある区画は来ない。
+	if (!isPlannedRow(row)) {
 		return {
 			color: UNASSIGNED_BOUNDARY_COLOR,
 			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
@@ -173,10 +178,11 @@ function styleForArea(areaId) {
 		};
 	}
 
-	if (!row.assignee_id) {
+	// 区画担当あり・実績0は塗りなし（境界線のみ）。実績が1枚でも入れば青で塗る。
+	if (row.distributed_total === 0) {
 		return {
-			color: UNASSIGNED_BOUNDARY_COLOR,
-			weight: weightForZoom(UNASSIGNED_BOUNDARY_WEIGHT),
+			color: ASSIGNED_BOUNDARY_COLOR,
+			weight: weightForZoom(ASSIGNED_BOUNDARY_WEIGHT),
 			fillOpacity: 0,
 		};
 	}
@@ -218,7 +224,7 @@ function updateHeaderStats() {
 
 	for (const row of state.termDataByAreaId.values()) {
 		if (!matchesAssigneeFilter(row, state.assigneeFilter)) continue;
-		if (!row.area_manager_id && !row.assignee_id) continue; // 予定配布エリア(エリア担当or区画担当が設定済み)のみ集計
+		if (!isPlannedRow(row)) continue; // 予定配布エリア(区画担当が設定済み)のみ集計
 		plannedHouseholds += row.num_households;
 		distributed += row.distributed_total;
 	}
@@ -703,7 +709,7 @@ function buildPopupContent(row, layer) {
 	L.DomEvent.disableClickPropagation(container);
 
 	const isZeroHousehold = row.num_households === 0;
-	const isNonTarget = !row.area_manager_id && !row.assignee_id;
+	const isNonTarget = !isPlannedRow(row);
 	const canEditAreaManager = !state.viewOnly && !isZeroHousehold;
 	const canEditAssignee = !state.viewOnly && !isZeroHousehold;
 	const canRecordDistribution = !state.viewOnly && !isZeroHousehold && !isNonTarget;
@@ -722,7 +728,7 @@ function buildPopupContent(row, layer) {
 			<span>エリア担当: ${row.area_manager_name || '未設定'}</span>
 			${canEditAreaManager ? '<button type="button" data-action="edit-area-manager">変更する</button>' : ''}
 		</div>
-		${!isZeroHousehold && isNonTarget ? '<p class="zero-household-note">エリア担当・区画担当が未設定のため、配布記録の対象外です。区画担当の設定は可能です。</p>' : ''}
+		${!isZeroHousehold && isNonTarget ? '<p class="zero-household-note">区画担当が未設定のため、配布記録の対象外です。区画担当を設定すると記録できます。</p>' : ''}
 		<div class="assignee-row">
 			<span>区画担当: ${row.assignee_name || '未担当'}</span>
 			${canEditAssignee ? '<button type="button" data-action="edit-assignee">変更する</button>' : ''}
@@ -797,6 +803,27 @@ function buildPopupContent(row, layer) {
 	return container;
 }
 
+/**
+ * エリア担当を未設定にする前の確認。未設定にすると、エリア内の配布実績0の区画の区画担当も未設定に
+ * 上書きされ配布計画外になる。配布実績のある区画は区画担当・実績とも残る（worker/records.ts の setAreaManager）。
+ * 区画担当を外す区画が無い場合（もともと計画外）は確認しない。
+ */
+function confirmClearAreaManager(row) {
+	let clearCount = 0;
+	let keepCount = 0;
+	for (const r of state.termDataByAreaId.values()) {
+		if (r.chome_area_id !== row.chome_area_id || !r.assignee_id) continue;
+		if (r.distributed_total > 0) keepCount++;
+		else clearCount++;
+	}
+	if (clearCount === 0) return true;
+	let message = `エリア担当を未設定にすると、エリア内の区画${clearCount}件の区画担当も未設定になり、配布計画外になります。`;
+	if (keepCount > 0) {
+		message += `\n配布実績のある区画${keepCount}件は、区画担当と実績をそのまま残します。`;
+	}
+	return confirm(`${message}\nよろしいですか？`);
+}
+
 function buildAreaManagerEditContent(row, layer) {
 	const container = document.createElement('div');
 	container.className = 'popup-content assignee-edit';
@@ -808,7 +835,7 @@ function buildAreaManagerEditContent(row, layer) {
 
 	container.innerHTML = `
 		<div class="title">エリア担当を設定</div>
-		<p class="hint">同じエリア(丁目)内の全区画に反映されます。担当者未設定の区画には担当者としても反映されます。</p>
+		<p class="hint">同じエリア(丁目)内の全区画に反映され、各区画の区画担当も同じ人に置き換わります。未設定にすると、エリア内の区画担当も未設定になり、配布計画外になります。配布実績のある区画は、どちらの場合も区画担当がそのまま残ります。</p>
 		<select data-role="area-manager-select">${options}</select>
 		<p class="error" data-role="area-manager-error"></p>
 		<div class="actions">
@@ -825,10 +852,11 @@ function buildAreaManagerEditContent(row, layer) {
 	container.querySelector('[data-action="save"]').addEventListener('click', async () => {
 		const select = container.querySelector('[data-role="area-manager-select"]');
 		const errorEl = container.querySelector('[data-role="area-manager-error"]');
+		if (!select.value && !confirmClearAreaManager(row)) return;
 		const res = await apiFetch('/api/area-manager', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ area_id: row.area_id, area_manager_id: select.value || null }),
+			body: JSON.stringify({ term_id: state.currentTermId, area_id: row.area_id, area_manager_id: select.value || null }),
 		});
 		const data = await res.json();
 		if (!res.ok) {
@@ -850,12 +878,15 @@ function buildAssigneeEditContent(row, layer) {
 	container.className = 'popup-content assignee-edit';
 	L.DomEvent.disableClickPropagation(container);
 
-	const options = ['<option value="">未担当（塗りつぶしなし）</option>']
+	// 実績が1以上の区画は未担当にできない（サーバー側 setAssignee でも拒否する）ため、選択肢から外す
+	const hasResult = row.distributed_total > 0;
+	const options = (hasResult ? [] : ['<option value="">未担当（配布計画外）</option>'])
 		.concat(state.activeUsers.map((u) => `<option value="${u.user_id}">${u.name}</option>`))
 		.join('');
 
 	container.innerHTML = `
 		<div class="title">区画担当を設定</div>
+		${hasResult ? '<p class="hint">配布実績があるため未担当にはできません（実績を0に戻すと未担当にできます）。</p>' : ''}
 		<select data-role="assignee-select">${options}</select>
 		<p class="error" data-role="assignee-error"></p>
 		<div class="actions">
