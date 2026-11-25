@@ -47,18 +47,35 @@ function escapeHtml(str) {
 	return String(str).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 }
 
-async function apiFetch(path, options = {}) {
-	const res = await fetch(path, {
-		...options,
-		headers: {
-			...(options.headers || {}),
-			Authorization: `Bearer ${session.token}`,
-		},
+// エラー時も呼び出し側が必ず `(await res.json()).error` で理由を表示できるよう、
+// 通信失敗・JSONでない応答（Cloudflare側のエラーページ等）をJSONのエラー応答に置き換えて返す。
+function jsonErrorResponse(message, status) {
+	return new Response(JSON.stringify({ error: message }), {
+		status,
+		headers: { 'Content-Type': 'application/json' },
 	});
+}
+
+async function apiFetch(path, options = {}) {
+	let res;
+	try {
+		res = await fetch(path, {
+			...options,
+			headers: {
+				...(options.headers || {}),
+				Authorization: `Bearer ${session.token}`,
+			},
+		});
+	} catch {
+		return jsonErrorResponse('通信に失敗しました。電波の良い場所でもう一度お試しください。', 503);
+	}
 	if (res.status === 401) {
 		sessionStorage.removeItem(SESSION_KEY);
 		location.href = '/login.html';
 		throw new Error('unauthorized');
+	}
+	if (!res.ok && !(res.headers.get('Content-Type') ?? '').includes('application/json')) {
+		return jsonErrorResponse(`サーバーでエラーが発生したため、処理できませんでした（HTTP ${res.status}）`, res.status);
 	}
 	return res;
 }
@@ -1041,10 +1058,23 @@ async function flushTrackBuffer() {
 		});
 		if (!res.ok) {
 			state.trackBuffer = toSend.concat(state.trackBuffer);
+			const data = await res.json().catch(() => ({}));
+			notifyTrackSaveError(data.error ?? '軌跡の保存に失敗しました');
+		} else {
+			trackSaveErrorShown = null;
 		}
 	} catch {
 		state.trackBuffer = toSend.concat(state.trackBuffer);
 	}
+}
+
+// 軌跡の送信は記録中に繰り返し行われるため、同じエラーを何度も表示しないよう、
+// 送信が成功するまでは同じ文言のエラーは1回だけ表示する（送信できなかった点は手元に残して再送する）。
+let trackSaveErrorShown = null;
+function notifyTrackSaveError(message) {
+	if (trackSaveErrorShown === message) return;
+	trackSaveErrorShown = message;
+	alert(`軌跡を保存できませんでした。記録は続けますが、保存できるまで再送を試みます。\n\n${message}`);
 }
 
 const trackRecordButton = document.getElementById('track-record-button');
@@ -1122,7 +1152,14 @@ async function stopTracking() {
 	for (let attempts = 0; state.trackBuffer.length > 0 && attempts < 5; attempts++) {
 		await flushTrackBuffer();
 	}
-	await apiFetch(`/api/gps-tracks/${trackId}/stop`, { method: 'POST' }).catch(() => {});
+	if (state.trackBuffer.length > 0) {
+		alert(`保存できなかった軌跡の点が${state.trackBuffer.length}件あります。この分の軌跡は記録されません。`);
+	}
+	const stopRes = await apiFetch(`/api/gps-tracks/${trackId}/stop`, { method: 'POST' }).catch(() => null);
+	if (stopRes && !stopRes.ok) {
+		const data = await stopRes.json().catch(() => ({}));
+		alert(`軌跡記録の終了を保存できませんでした。\n\n${data.error ?? ''}`);
+	}
 	state.trackId = null;
 
 	if (state.wakeLock) {

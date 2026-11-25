@@ -64,20 +64,22 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	const rate = Math.round((newTotal / row.num_households) * 100 * 10) / 10;
 
 	// 上の判定後に区画担当が外された場合に実績だけが残らないよう、更新時にも区画担当の存在を条件にする
-	const updateResult = await env.DB.prepare(
-		'UPDATE term_data SET distributed_total = ?, distribution_rate = ?, last_updated_at = ? WHERE id = ? AND assignee_id IS NOT NULL',
-	)
-		.bind(newTotal, rate, now, row.id)
-		.run();
+	// 実績の更新と履歴の追加は1つのトランザクション（batch）で行い、途中で失敗（書き込み上限超過等）
+	// しても実績だけ・履歴だけが残らないようにする。履歴は上のUPDATEが実際に行われた場合だけ追加する
+	// （同じ区画・同じ時刻・同じ累計に更新された行が存在することを条件にする）。
+	const [updateResult] = await env.DB.batch([
+		env.DB.prepare(
+			'UPDATE term_data SET distributed_total = ?, distribution_rate = ?, last_updated_at = ? WHERE id = ? AND assignee_id IS NOT NULL',
+		).bind(newTotal, rate, now, row.id),
+		env.DB.prepare(
+			`INSERT INTO activity_log (term_id, area_id, updated_at, user_id, user_name, delta)
+			 SELECT ?, ?, ?, ?, ?, ?
+			 WHERE EXISTS (SELECT 1 FROM term_data WHERE id = ? AND last_updated_at = ? AND distributed_total = ? AND assignee_id IS NOT NULL)`,
+		).bind(termId, areaId, now, user.user_id, user.name, delta, row.id, now, newTotal),
+	]);
 	if (updateResult.meta.changes === 0) {
 		return Response.json({ error: '区画担当が未設定のためこの区画は配布記録の対象外です' }, { status: 400 });
 	}
-
-	await env.DB.prepare(
-		'INSERT INTO activity_log (term_id, area_id, updated_at, user_id, user_name, delta) VALUES (?, ?, ?, ?, ?, ?)',
-	)
-		.bind(termId, areaId, now, user.user_id, user.name, delta)
-		.run();
 
 	const updated = await env.DB.prepare(
 		`SELECT areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.chome_area_id, areas.block, areas.num_households,

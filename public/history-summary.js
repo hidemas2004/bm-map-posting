@@ -7,18 +7,35 @@ if (!sessionRaw) {
 }
 const session = JSON.parse(sessionRaw);
 
-async function apiFetch(path, options = {}) {
-	const res = await fetch(path, {
-		...options,
-		headers: {
-			...(options.headers || {}),
-			Authorization: `Bearer ${session.token}`,
-		},
+// エラー時も呼び出し側が必ず `(await res.json()).error` で理由を表示できるよう、
+// 通信失敗・JSONでない応答（Cloudflare側のエラーページ等）をJSONのエラー応答に置き換えて返す。
+function jsonErrorResponse(message, status) {
+	return new Response(JSON.stringify({ error: message }), {
+		status,
+		headers: { 'Content-Type': 'application/json' },
 	});
+}
+
+async function apiFetch(path, options = {}) {
+	let res;
+	try {
+		res = await fetch(path, {
+			...options,
+			headers: {
+				...(options.headers || {}),
+				Authorization: `Bearer ${session.token}`,
+			},
+		});
+	} catch {
+		return jsonErrorResponse('通信に失敗しました。電波の良い場所でもう一度お試しください。', 503);
+	}
 	if (res.status === 401) {
 		sessionStorage.removeItem(SESSION_KEY);
 		location.href = '/login.html';
 		throw new Error('unauthorized');
+	}
+	if (!res.ok && !(res.headers.get('Content-Type') ?? '').includes('application/json')) {
+		return jsonErrorResponse(`サーバーでエラーが発生したため、処理できませんでした（HTTP ${res.status}）`, res.status);
 	}
 	return res;
 }

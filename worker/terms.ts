@@ -51,34 +51,27 @@ export async function createNewTerm(
 
 	const today = new Date().toISOString().slice(0, 10);
 
-	await env.DB.prepare("UPDATE terms SET status = '完了', end_date = ? WHERE status = '進行中'")
-		.bind(today)
-		.run();
-
-	const inserted = await env.DB.prepare(
-		"INSERT INTO terms (term_name, start_date, status) VALUES (?, ?, '進行中')",
-	)
-		.bind(termName, today)
-		.run();
-	const newTermId = inserted.meta.last_row_id;
-
-	if (inheritFromTermId) {
-		await env.DB.prepare(
-			`INSERT INTO term_data (term_id, area_id, area_manager_id, area_manager_name, assignee_id, assignee_name, distributed_total, distribution_rate, last_updated_at)
-			 SELECT ?, areas.area_id, src.area_manager_id, COALESCE(src.area_manager_name, ''), src.assignee_id, COALESCE(src.assignee_name, ''), 0, 0, NULL
-			 FROM areas
-			 LEFT JOIN term_data src ON src.area_id = areas.area_id AND src.term_id = ?`,
-		)
-			.bind(newTermId, inheritFromTermId)
-			.run();
-	} else {
-		await env.DB.prepare(
-			`INSERT INTO term_data (term_id, area_id, area_manager_id, area_manager_name, assignee_id, assignee_name, distributed_total, distribution_rate, last_updated_at)
-			 SELECT ?, area_id, NULL, '', NULL, '', 0, 0, NULL FROM areas`,
-		)
-			.bind(newTermId)
-			.run();
-	}
+	// 現タームの完了・新タームの作成・全区画の term_data 作成を1つのトランザクション（batch）で行う。
+	// 別々に実行すると、途中で失敗（書き込み上限超過等）した場合に「現タームは完了になったが
+	// 新タームの区画データが無い」状態が残るため。新タームのIDは batch 内で参照できないので、
+	// 直前のINSERTで唯一の「進行中」になった行を副問い合わせで指す。
+	const NEW_TERM_ID = "(SELECT term_id FROM terms WHERE status = '進行中')";
+	const results = await env.DB.batch([
+		env.DB.prepare("UPDATE terms SET status = '完了', end_date = ? WHERE status = '進行中'").bind(today),
+		env.DB.prepare("INSERT INTO terms (term_name, start_date, status) VALUES (?, ?, '進行中')").bind(termName, today),
+		inheritFromTermId
+			? env.DB.prepare(
+					`INSERT INTO term_data (term_id, area_id, area_manager_id, area_manager_name, assignee_id, assignee_name, distributed_total, distribution_rate, last_updated_at)
+					 SELECT ${NEW_TERM_ID}, areas.area_id, src.area_manager_id, COALESCE(src.area_manager_name, ''), src.assignee_id, COALESCE(src.assignee_name, ''), 0, 0, NULL
+					 FROM areas
+					 LEFT JOIN term_data src ON src.area_id = areas.area_id AND src.term_id = ?`,
+				).bind(inheritFromTermId)
+			: env.DB.prepare(
+					`INSERT INTO term_data (term_id, area_id, area_manager_id, area_manager_name, assignee_id, assignee_name, distributed_total, distribution_rate, last_updated_at)
+					 SELECT ${NEW_TERM_ID}, area_id, NULL, '', NULL, '', 0, 0, NULL FROM areas`,
+				),
+	]);
+	const newTermId = results[1].meta.last_row_id;
 
 	const term = await env.DB.prepare('SELECT * FROM terms WHERE term_id = ?').bind(newTermId).first();
 	return Response.json(term);
