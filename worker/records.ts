@@ -1,4 +1,5 @@
 import type { SessionUser } from './auth';
+import { checkChomeAreaLocked } from './locks';
 
 export interface RecordsEnv {
 	DB: D1Database;
@@ -63,14 +64,40 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	const now = new Date().toISOString();
 	const rate = Math.round((newTotal / row.num_households) * 100 * 10) / 10;
 
-	// 上の判定後に区画担当が外された場合に実績だけが残らないよう、更新時にも区画担当の存在を条件にする
-	const updateResult = await env.DB.prepare(
-		'UPDATE term_data SET distributed_total = ?, distribution_rate = ?, last_updated_at = ? WHERE id = ? AND assignee_id IS NOT NULL',
+	// activity_logへの記録前に事前チェックしておく（ロック喪失時に監査ログだけが残る事故を避ける）。
+	// 実際の整合性保証はこの後のUPDATE文のEXISTS条件（原子的チェック）側で行う。
+	const preCheckLock = await env.DB.prepare(
+		"SELECT 1 FROM edit_locks WHERE area_id = ? AND user_id = ? AND expires_at > datetime('now')",
 	)
-		.bind(newTotal, rate, now, row.id)
+		.bind(areaId, user.user_id)
+		.first();
+	if (!preCheckLock) {
+		return Response.json({ error: 'ロックの有効期限が切れました。区画を選び直してください' }, { status: 409 });
+	}
+
+	// 原子的チェック: 編集ロックを保持していること、かつ区画担当が設定済みであること（上の判定後に区画担当が
+	// 外された場合に実績だけが残らないようにする。「実績が1以上の区画には必ず区画担当がいる」不変条件）。
+	// activity_logはUPDATE成功後に記録する（拒否時に監査ログだけが残らないように）。
+	const updateResult = await env.DB.prepare(
+		`UPDATE term_data SET distributed_total = ?, distribution_rate = ?, last_updated_at = ?
+		 WHERE id = ?
+		   AND assignee_id IS NOT NULL
+		   AND EXISTS (
+		     SELECT 1 FROM edit_locks
+		     WHERE area_id = ? AND user_id = ? AND expires_at > datetime('now')
+		   )`,
+	)
+		.bind(newTotal, rate, now, row.id, areaId, user.user_id)
 		.run();
+
 	if (updateResult.meta.changes === 0) {
-		return Response.json({ error: '区画担当が未設定のためこの区画は配布記録の対象外です' }, { status: 400 });
+		const assigned = await env.DB.prepare('SELECT 1 FROM term_data WHERE id = ? AND assignee_id IS NOT NULL')
+			.bind(row.id)
+			.first();
+		if (!assigned) {
+			return Response.json({ error: '区画担当が未設定のためこの区画は配布記録の対象外です' }, { status: 400 });
+		}
+		return Response.json({ error: 'ロックの有効期限が切れました。区画を選び直してください' }, { status: 409 });
 	}
 
 	await env.DB.prepare(
@@ -93,7 +120,7 @@ export async function recordDistribution(request: Request, env: RecordsEnv, user
 	return Response.json(updated);
 }
 
-export async function setAssignee(request: Request, env: RecordsEnv): Promise<Response> {
+export async function setAssignee(request: Request, env: RecordsEnv, user: SessionUser): Promise<Response> {
 	const body = await request
 		.json<{ term_id?: number; area_id?: string; assignee_id?: string | null }>()
 		.catch(() => ({}) as { term_id?: number; area_id?: string; assignee_id?: string | null });
@@ -129,22 +156,31 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
 	// 実績が1以上の区画は区画担当を未担当にできない（実績を0に戻してからなら可）。
 	// 判定と更新の間に実績が記録されても不変条件が崩れないよう、UPDATEの条件に含める。
 	const result = await env.DB.prepare(
-		'UPDATE term_data SET assignee_id = ?, assignee_name = ? WHERE term_id = ? AND area_id = ? AND (? IS NOT NULL OR distributed_total = 0)',
+		`UPDATE term_data SET assignee_id = ?, assignee_name = ?
+		 WHERE term_id = ? AND area_id = ?
+		   AND (? IS NOT NULL OR distributed_total = 0)
+		   AND EXISTS (
+		     SELECT 1 FROM edit_locks
+		     WHERE area_id = ? AND user_id = ? AND expires_at > datetime('now')
+		   )`,
 	)
-		.bind(assigneeId, assigneeName, termId, areaId, assigneeId)
+		.bind(assigneeId, assigneeName, termId, areaId, assigneeId, areaId, user.user_id)
 		.run();
 
 	if (result.meta.changes === 0) {
-		const exists = await env.DB.prepare('SELECT distributed_total FROM term_data WHERE term_id = ? AND area_id = ?')
+		const current = await env.DB.prepare('SELECT distributed_total FROM term_data WHERE term_id = ? AND area_id = ?')
 			.bind(termId, areaId)
 			.first<{ distributed_total: number }>();
-		if (exists) {
+		if (!current) {
+			return Response.json({ error: '指定されたターム・エリアの組み合わせが見つかりません' }, { status: 404 });
+		}
+		if (!assigneeId && current.distributed_total > 0) {
 			return Response.json(
 				{ error: '配布実績がある区画は区画担当を未担当にできません（実績を0に戻すと未担当にできます）' },
 				{ status: 400 },
 			);
 		}
-		return Response.json({ error: '指定されたターム・エリアの組み合わせが見つかりません' }, { status: 404 });
+		return Response.json({ error: 'ロックの有効期限が切れました。区画を選び直してください' }, { status: 409 });
 	}
 
 	const updated = await env.DB.prepare(
@@ -172,7 +208,7 @@ export async function setAssignee(request: Request, env: RecordsEnv): Promise<Re
  *     また「実績が1以上の区画には必ず区画担当がいる」不変条件を保つため。recordDistribution参照）。
  * 完了タームの計画を書き換えないよう、進行中タームのみ受け付ける。
  */
-export async function setAreaManager(request: Request, env: RecordsEnv): Promise<Response> {
+export async function setAreaManager(request: Request, env: RecordsEnv, user: SessionUser): Promise<Response> {
 	const body = await request
 		.json<{ term_id?: number; area_id?: string; area_manager_id?: string | null }>()
 		.catch(() => ({}) as { term_id?: number; area_id?: string; area_manager_id?: string | null });
@@ -198,6 +234,12 @@ export async function setAreaManager(request: Request, env: RecordsEnv): Promise
 	if (!area) {
 		return Response.json({ error: '指定されたエリアが見つかりません' }, { status: 404 });
 	}
+
+	const lockedByName = await checkChomeAreaLocked(env, area.chome_area_id, user.user_id);
+	if (lockedByName) {
+		return Response.json({ error: `${lockedByName}さんが編集中です` }, { status: 409 });
+	}
+
 	if (area.num_households === 0) {
 		return Response.json({ error: '世帯数が0の区画ではエリア担当を設定できません' }, { status: 400 });
 	}

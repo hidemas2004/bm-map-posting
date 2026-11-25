@@ -72,6 +72,7 @@ npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0010_gps_tracks_term_id.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0011_gps_tracks_distance.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0012_term_area_manager.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0013_edit_locks.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=regions/14213-yamato/areas.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=seed/users.sql
 ```
@@ -163,6 +164,18 @@ CSVダウンロードに対応している（スプレッドシートでの目�
   影響しない（旧仕様では全区画のエリア担当を初期化していた）。
 - 利用者向けの説明はメニューの「使い方」（`public/help.html`・`public/help.css`）にある。
   仕様を変えた場合はこちらも合わせて更新すること。
+
+## 区画編集の排他制御（編集ロック）
+
+複数人が同一区画・エリアを同時に編集して後勝ちで上書きする事故を防ぐため、区画単位のTTL付き
+編集ロック（`edit_locks`テーブル、`migrations/0013_edit_locks.sql`、API本体は`worker/locks.ts`）を持つ。
+区画のポップアップを開くとロックを取得し（他人が保持中なら「◯◯さんが編集中です」の読み取り専用表示）、
+10秒間隔のハートビートで延長、閉じると解放する（TTL 30秒で自然失効）。配布実績記録・区画担当変更は
+ロック所有をUPDATE文の条件に含め、エリア担当変更はエリア内に他人のロックがあれば拒否する。
+
+**本番反映状況（2026-11-26時点）: 未反映。** `0013_edit_locks.sql`はどの地域のD1にも未適用。
+このコードをデプロイする前に、必ず対象地域へ`0013`を適用すること（テーブルが無いと区画のポップアップ・
+書き込みAPIがすべてエラーになる）。
 
 ## ユーザーマスタの管理（CSVインポート/エクスポート、管理者限定）
 
