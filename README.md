@@ -453,6 +453,28 @@ npm run new-region
 個別設定される（値はCloudflareダッシュボード側でのみ保持。再発行する場合は
 `POST /api/areas/import`を使う外部スクリプト側の設定も合わせて更新すること）。
 
+### 地域ごとの反映状況（2026-11-26時点）
+
+| 地域 | 動いているコード | D1に適用済みのマイグレーション |
+|---|---|---|
+| 14205-fujisawa（藤沢） | main 最新（画面同期・楽観的排他制御・DB更新エラー表示まで） | 〜0012、0013・0014（取り消した編集ロック。未使用）、**0015** |
+| 14213-yamato / 14206-odawara / 14203-hiratsuka / 14117-aoba / 14112-asahi | 編集ロック取り消し時点（PR #37、ef60b04 と同内容） | 〜0012、0013（取り消した編集ロック。未使用）。**0015 は未適用** |
+
+**藤沢以外の地域へ main をデプロイする前に、必ずその地域へ `migrations/0015_term_data_rev.sql` を適用すること。**
+現在のコードは `term_data.rev` / `updated_by_name` を読み書きするため、未適用のままデプロイすると地図の
+区画データ読み込み・配布記録・担当設定がすべてエラーになる（「画面同期と楽観的排他制御」参照）。
+適用は列追加と索引作成のみで、適用後も旧コードはそのまま動く（適用からデプロイまでに間があっても問題ない）。
+
+```bash
+# 例: 大和市。事前に必ずバックアップを取る
+npx wrangler d1 export bm-posting-db-14213-yamato --env 14213-yamato --remote --output=<バックアップ先>/14213-yamato_before_0015.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --remote --file=migrations/0015_term_data_rev.sql
+npx wrangler deploy --env 14213-yamato
+```
+
+反映したら上の表を更新すること。0013・0014 は欠番扱いで、今後の地域では適用不要（`npm run new-region` も
+0012 の次は 0015 を適用する）。
+
 ### 再デプロイ・DB更新の手順
 
 ```bash
