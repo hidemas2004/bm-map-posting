@@ -10,6 +10,7 @@ import { createComment, deleteComment, listComments, updateComment, type Comment
 import { queryTracks, startTrack, stopTrack, submitTrackPoints, type GpsTracksEnv } from './gps_tracks';
 import { getHistorySummary, type HistorySummaryEnv } from './history_summary';
 import { buildConfigResponse, type ConfigEnv } from './config';
+import { errorResponse } from './errors';
 
 export interface Env
 	extends AuthEnv,
@@ -29,6 +30,16 @@ export interface Env
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
+		// 捕捉されなかった例外（D1の上限超過など）も、画面に表示できるJSONのエラーで返す（worker/errors.ts）
+		try {
+			return await handle(request, env);
+		} catch (e) {
+			return errorResponse(e);
+		}
+	},
+};
+
+async function handle(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
 
 		if (url.pathname === '/config.js') {
@@ -180,5 +191,4 @@ export default {
 		}
 
 		return env.ASSETS.fetch(request);
-	},
-};
+}
