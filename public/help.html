@@ -123,6 +123,7 @@
         <li>エリア担当を「未設定」にすると、そのエリア内の<strong>区画担当も未設定になり</strong>、配布の対象外になります。エリアを今回の計画から外したいときに使います。この場合も、配布実績のある区画は区画担当と実績をそのまま残します。</li>
         <li>未設定にする前には確認が表示され、区画担当を外す区画の件数と、実績があるため残す区画の件数が示されます。</li>
         <li>エリア担当を決めずに、区画担当だけを設定することもできます。</li>
+        <li>区画のポップアップの「<strong>自分が担当する</strong>」を押すと、一覧から選ばなくても、ワンタップで自分がその区画の区画担当になります（すでに自分が担当している区画には表示されません）。ほかの人が担当している区画で押した場合は、変更してよいか確認が出ます。</li>
         <li>配布実績のある区画は、区画担当を「未担当」にできません（別の人に変えることはできます）。未担当にしたいときは、マイナスの枚数を記録して実績を0に戻してから変更します。</li>
       </ul>
       <h4>配布の対象になる区画</h4>
@@ -191,7 +192,7 @@
       <div class="mh-row">
         <span class="mh-item"><span class="num">1</span><span class="mh-sel">12月第1弾 ▾</span></span>
         <span class="mh-item"><span class="num">2</span><span class="mh-badge">閲覧専用</span></span>
-        <span class="mh-item"><span class="num">3</span><span class="mh-sel">(全体表示) ▾</span></span>
+        <span class="mh-item"><span class="num">3</span><span class="mh-sel">(全体表示) ▾</span><span class="mh-user">佐藤</span></span>
         <span class="mh-item"><span class="num">4</span><span class="mh-cb">投票所</span></span>
         <span class="mh-item"><span class="num">5</span><span class="mh-cb">ポスト禁止</span><span class="mh-cb">ポスター候補</span><span class="mh-cb">その他</span></span>
         <span class="mh-actions">
@@ -221,7 +222,8 @@
       </div></div>
 
       <div class="item" id="h-filter"><span class="num">3</span><div>
-        <h4>担当者フィルタ</h4>
+        <h4>担当者フィルタ・ログイン中のユーザー名</h4>
+        <p>フィルタの右には、いまログインしているあなたの名前が表示されます。</p>
         <ul>
           <li><strong>(全体表示)</strong>：通常の表示です。すべての区画を<a href="#colors">担当と配布率の色</a>で塗り分けます。</li>
           <li><strong>(地図表示)</strong>：区画の塗りを消して、境界線だけにします。道や建物を確認したいときに使います。</li>

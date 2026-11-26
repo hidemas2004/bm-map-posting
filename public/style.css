@@ -51,6 +51,11 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
   background: #b45309; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 999px;
 }
 #view-only-badge.show { display: inline-block; }
+/* ログイン中のユーザー名（フィルタの右）。長い名前は省略表示にしてヘッダの行を崩さない */
+#current-user-name {
+  font-size: 13px; color: #e5e7eb; border: 1px solid #4b5563; border-radius: 6px;
+  padding: 3px 8px; white-space: nowrap; max-width: 9em; overflow: hidden; text-overflow: ellipsis;
+}
 
 .header-toggle-hint {
   text-align: center; font-size: 10px; color: #6b7280; line-height: 1;
@@ -181,6 +186,7 @@ body.list-page #header a#back-link {
 .popup-content .row { display: flex; justify-content: space-between; margin: 4px 0; }
 .popup-content .assignee-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0; }
 .popup-content .assignee-row button { font-size: 12px; padding: 2px 8px; cursor: pointer; }
+.popup-content .assignee-actions { display: inline-flex; gap: 4px; flex-shrink: 0; margin-left: 6px; }
 .popup-content .zero-household-note {
   background: #f3f4f6; color: #4b5563; font-size: 12px; padding: 6px 8px; border-radius: 6px; margin: 4px 0;
 }
