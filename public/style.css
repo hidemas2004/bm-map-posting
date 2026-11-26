@@ -192,6 +192,7 @@ body.list-page #header a#back-link {
 .popup-content .record-form button { padding: 8px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
 .popup-content .recorded-by { font-size: 11px; color: #6b7280; }
 .popup-content .error { color: #dc2626; font-size: 12px; }
+.popup-content .conflict-banner { background: #fef3c7; border: 1px solid #f59e0b; color: #92400e; border-radius: 4px; padding: 6px 8px; margin: 4px 0 8px; font-size: 12px; line-height: 1.5; }
 .popup-content .assignee-edit select { width: 100%; padding: 6px; margin: 6px 0; }
 .popup-content .assignee-edit .actions { display: flex; gap: 6px; justify-content: flex-end; }
 

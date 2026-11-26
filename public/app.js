@@ -27,6 +27,7 @@ const state = {
 	currentTermId: null,
 	viewOnly: false,
 	termDataByAreaId: new Map(),
+	maxRev: 0, // 受け取った区画データの最大の変更番号（画面同期用。syncChanges 参照）
 	activeUsers: [],
 	watchId: null,
 	gpsMarker: null,
@@ -704,11 +705,92 @@ function buildCommentEditContent(comment, marker) {
 // 「ポップアップ外クリックで自動クローズ」機構が反応して閉じてしまうため、
 // 生成した要素は必ず disableClickPropagation で地図への伝播を止める。
 
-function openPopup(layer) {
+// ---- 画面同期（他の人・端末の更新の反映） ----
+// 区画データの各行は変更番号(rev)を持つ（migrations/0015_term_data_rev.sql）。画面は受け取った最大の
+// rev（state.maxRev）を覚えておき、区画を開く直前と画面に戻ったときに、それより新しい行だけを
+// 取得して反映する（GET /api/term-data/changes）。自分の保存結果は state に反映するが maxRev は進めない
+// （その間に他の人が付けた番号を取りこぼさないため。自分の行が次回もう一度返ってくるだけで害はない）。
+
+function applyRows(rows) {
+	if (!Array.isArray(rows) || rows.length === 0) return;
+	for (const r of rows) state.termDataByAreaId.set(r.area_id, r);
+	redrawStyles();
+	updateHeaderStats();
+}
+
+/**
+ * 他の人の更新を取得して反映する。他の人が新タームを開始していた（見ていた進行中タームが終わった）
+ * 場合は知らせて表示を切り替え、'term-changed' を返す。通信に失敗しても手元のデータのまま続ける
+ * （保存時の変更番号の確認で、古いデータのままの上書きは防がれる）。
+ */
+async function syncChanges() {
+	const termId = state.currentTermId;
+	if (!termId) return;
+	const res = await apiFetch(`/api/term-data/changes?term_id=${termId}&since=${state.maxRev}`);
+	if (!res.ok) return;
+	const data = await res.json();
+	if (termId !== state.currentTermId) return;
+	applyRows(data.rows);
+	for (const r of data.rows ?? []) state.maxRev = Math.max(state.maxRev, r.rev ?? 0);
+
+	const viewing = currentTerm();
+	const active = data.active_term;
+	if (viewing && viewing.status === '進行中' && (!active || active.term_id !== viewing.term_id)) {
+		map.closePopup();
+		alert(
+			active
+				? `新しいターム「${active.term_name}」が開始されました。表示を切り替えます。`
+				: `ターム「${viewing.term_name}」は終了しました。表示を更新します。`,
+		);
+		await loadTerms();
+		return 'term-changed';
+	}
+}
+
+/** 区画にポップアップを結び付けて開く。Leaflet標準の「クリックで開く」は外し、必ず openPopup（同期後）経由で開く。 */
+function bindAreaPopup(layer, content) {
+	layer.bindPopup(content);
+	layer.off('click', layer._openPopup, layer);
+	layer.openPopup();
+}
+
+let openPopupSeq = 0;
+
+async function openPopup(layer) {
+	// 同期の応答待ちの間に別の区画をタップした場合、古い方は開かない
+	const seq = ++openPopupSeq;
+	const result = await syncChanges();
+	if (result === 'term-changed' || seq !== openPopupSeq) return;
 	const areaId = layer.feature.properties.area_id;
 	const row = state.termDataByAreaId.get(areaId);
 	const content = row ? buildPopupContent(row, layer) : buildNoDataPopup(layer.feature.properties);
-	layer.bindPopup(content).openPopup();
+	bindAreaPopup(layer, content);
+}
+
+/** 保存時に他の人が先に更新していた（409 conflict）場合: 最新の内容で表示し直し、何が変わったかを知らせる。 */
+function showConflict(layer, oldRow, data) {
+	applyRows(data.rows);
+	const latest = state.termDataByAreaId.get(oldRow.area_id) ?? oldRow;
+	const changes = [];
+	if (oldRow.distributed_total !== latest.distributed_total) {
+		changes.push(`区画累計配布 ${oldRow.distributed_total} → ${latest.distributed_total}世帯`);
+	}
+	if ((oldRow.assignee_name || '未担当') !== (latest.assignee_name || '未担当')) {
+		changes.push(`区画担当 ${oldRow.assignee_name || '未担当'} → ${latest.assignee_name || '未担当'}`);
+	}
+	if ((oldRow.area_manager_name || '未設定') !== (latest.area_manager_name || '未設定')) {
+		changes.push(`エリア担当 ${oldRow.area_manager_name || '未設定'} → ${latest.area_manager_name || '未設定'}`);
+	}
+	const content = buildPopupContent(latest, layer);
+	const banner = document.createElement('p');
+	banner.className = 'conflict-banner';
+	banner.textContent =
+		`${data.error ?? '他の人が先にこの区画を更新しました'}` +
+		(changes.length ? `（${changes.join('、')}）` : '') +
+		'。保存されていないので、必要ならもう一度操作してください。';
+	content.insertBefore(banner, content.children[1] ?? null);
+	layer.setPopupContent(content);
+	layer.getPopup().update();
 }
 
 function buildNoDataPopup(props) {
@@ -786,9 +868,13 @@ function buildPopupContent(row, layer) {
 			const res = await apiFetch('/api/record', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ term_id: state.currentTermId, area_id: row.area_id, delta }),
+				body: JSON.stringify({ term_id: state.currentTermId, area_id: row.area_id, delta, expected_rev: row.rev ?? 0 }),
 			});
 			const data = await res.json();
+			if (res.status === 409 && data.conflict) {
+				showConflict(layer, row, data);
+				return;
+			}
 			if (!res.ok) {
 				errorEl.textContent = data.error ?? '記録に失敗しました';
 				return;
@@ -842,6 +928,11 @@ function confirmClearAreaManager(row) {
 }
 
 function buildAreaManagerEditContent(row, layer) {
+	// 楽観的排他制御用: この画面を開いた時点で手元にあるエリア内の区画の変更番号の最大値
+	let expectedAreaRev = 0;
+	for (const r of state.termDataByAreaId.values()) {
+		if (r.chome_area_id === row.chome_area_id) expectedAreaRev = Math.max(expectedAreaRev, r.rev ?? 0);
+	}
 	const container = document.createElement('div');
 	container.className = 'popup-content assignee-edit';
 	L.DomEvent.disableClickPropagation(container);
@@ -873,15 +964,24 @@ function buildAreaManagerEditContent(row, layer) {
 		const res = await apiFetch('/api/area-manager', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ term_id: state.currentTermId, area_id: row.area_id, area_manager_id: select.value || null }),
+			body: JSON.stringify({
+				term_id: state.currentTermId,
+				area_id: row.area_id,
+				area_manager_id: select.value || null,
+				expected_rev: expectedAreaRev,
+			}),
 		});
 		const data = await res.json();
+		if (res.status === 409 && data.conflict) {
+			showConflict(layer, row, data);
+			return;
+		}
 		if (!res.ok) {
 			errorEl.textContent = data.error ?? '設定に失敗しました';
 			return;
 		}
-		// 同一エリア内の複数区画が一括更新されるため、現タームのデータを丸ごと再取得して反映する
-		await selectTerm(state.currentTermId);
+		// 同一エリア内の区画がまとめて更新されるので、応答に含まれるエリア内の全区画の最新行を反映する
+		applyRows(data.rows);
 		// エリア担当の設定完了直後に配布記入フォーム付きのポップアップが自動で開くと、
 		// 意図せず配布実績を入力してしまいやすいため、ここではポップアップを閉じるだけにする(issue#11)。
 		layer.closePopup();
@@ -923,9 +1023,18 @@ function buildAssigneeEditContent(row, layer) {
 		const res = await apiFetch('/api/assignee', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ term_id: state.currentTermId, area_id: row.area_id, assignee_id: select.value || null }),
+			body: JSON.stringify({
+				term_id: state.currentTermId,
+				area_id: row.area_id,
+				assignee_id: select.value || null,
+				expected_rev: row.rev ?? 0,
+			}),
 		});
 		const data = await res.json();
+		if (res.status === 409 && data.conflict) {
+			showConflict(layer, row, data);
+			return;
+		}
 		if (!res.ok) {
 			errorEl.textContent = data.error ?? '設定に失敗しました';
 			return;
@@ -972,6 +1081,7 @@ async function selectTerm(termId) {
 	const res = await apiFetch(`/api/term-data?term_id=${termId}`);
 	const rows = await res.json();
 	state.termDataByAreaId = new Map(rows.map((r) => [r.area_id, r]));
+	state.maxRev = rows.reduce((m, r) => Math.max(m, r.rev ?? 0), 0);
 	redrawStyles();
 	updateHeaderStats();
 }
@@ -1191,6 +1301,11 @@ trackRecordButton.addEventListener('click', () => {
 document.addEventListener('visibilitychange', () => {
 	if (document.visibilityState === 'hidden' && state.trackId !== null) {
 		stopTracking();
+	}
+	// 画面に戻ったとき（他のアプリから切り替えた・スリープから復帰した）は、他の人の更新を反映する。
+	// ポップアップを開いている間は、入力中の内容を消さないよう同期しない（開き直したときに反映される）。
+	if (document.visibilityState === 'visible' && !document.querySelector('.leaflet-popup')) {
+		syncChanges().catch(() => {});
 	}
 });
 

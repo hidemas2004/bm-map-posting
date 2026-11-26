@@ -1,3 +1,5 @@
+import { TERM_DATA_COLUMNS } from './records';
+
 export interface TermsEnv {
 	DB: D1Database;
 }
@@ -9,11 +11,7 @@ export async function listTerms(env: TermsEnv): Promise<Response> {
 
 export async function getTermData(env: TermsEnv, termId: string): Promise<Response> {
 	const { results } = await env.DB.prepare(
-		`SELECT
-			areas.area_id, areas.city, areas.ward, areas.town, areas.chome, areas.chome_area_id, areas.block, areas.num_households,
-			term_data.area_manager_id, term_data.area_manager_name,
-			term_data.assignee_id, term_data.assignee_name, term_data.distributed_total,
-			term_data.distribution_rate, term_data.last_updated_at
+		`SELECT ${TERM_DATA_COLUMNS}
 		FROM term_data
 		JOIN areas ON areas.area_id = term_data.area_id
 		WHERE term_data.term_id = ?
@@ -22,6 +20,25 @@ export async function getTermData(env: TermsEnv, termId: string): Promise<Respon
 		.bind(termId)
 		.all();
 	return Response.json(results);
+}
+
+/**
+ * 画面同期用: 指定タームで変更番号(rev)が since より大きい区画行だけを返す（migrations/0015_term_data_rev.sql）。
+ * 画面は受け取った最大の rev を覚えておき、区画を開くとき・画面に戻ったときに呼ぶ。
+ * 返すのは変更履歴ではなく各区画の現在の状態なので、同じ区画が何度更新されていても1行になる。
+ * あわせて現在の進行中ターム（無ければ null）を返し、他の人が新タームを開始した場合に画面が気付けるようにする。
+ */
+export async function getTermDataChanges(env: TermsEnv, termId: string, since: number): Promise<Response> {
+	const [changes, active] = await env.DB.batch([
+		env.DB.prepare(
+			`SELECT ${TERM_DATA_COLUMNS}
+			 FROM term_data
+			 JOIN areas ON areas.area_id = term_data.area_id
+			 WHERE term_data.term_id = ? AND term_data.rev > ?`,
+		).bind(termId, since),
+		env.DB.prepare("SELECT term_id, term_name FROM terms WHERE status = '進行中'"),
+	]);
+	return Response.json({ rows: changes.results, active_term: active.results[0] ?? null });
 }
 
 /**
