@@ -72,6 +72,7 @@ npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0010_gps_tracks_term_id.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0011_gps_tracks_distance.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0012_term_area_manager.sql
+npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=migrations/0015_term_data_rev.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=regions/14213-yamato/areas.sql
 npx wrangler d1 execute bm-posting-db-14213-yamato --env 14213-yamato --local --file=seed/users.sql
 ```
@@ -163,6 +164,27 @@ CSVダウンロードに対応している（スプレッドシートでの目�
   影響しない（旧仕様では全区画のエリア担当を初期化していた）。
 - 利用者向けの説明はメニューの「使い方」（`public/help.html`・`public/help.css`）にある。
   仕様を変えた場合はこちらも合わせて更新すること。
+
+## 画面同期と楽観的排他制御（migrations/0015）
+
+複数人が同時に運用しても、他の人の更新が画面に反映され、知らずに上書きしないようにする仕組み。
+常時接続や定期的な問い合わせは行わず（Workers・D1無料プランの上限を消費しないため）、必要なときだけ差分を取る。
+
+- `term_data.rev`（変更番号）: 担当・エリア担当・実績を更新するたびに「そのタームの最大値＋1」を付ける
+  （`worker/records.ts`。エリア担当の一括更新ではエリア内の全区画に同じ番号）。`term_data.updated_by_name` は
+  最後に更新した人の名前。索引 `idx_term_data_term_rev (term_id, rev)`。
+- **画面同期**: 画面は受け取った最大の rev を覚えておき、区画をタップしてポップアップを開く直前と、画面に
+  戻ったとき（`visibilitychange`）に `GET /api/term-data/changes?term_id=&since=` で「それより新しい行」
+  （変更履歴ではなく各区画の現在の状態）だけを取得して反映する。応答には現在の進行中タームも含め、他の人が
+  新タームを開始していれば知らせて切り替える。コメント（ピン）は対象外（再読み込み時に反映）。
+- **楽観的排他制御**: 保存（`/api/record`・`/api/assignee`・`/api/area-manager`）時に、画面が開いた時点の
+  rev を `expected_rev` で送る。サーバーは rev が一致する場合だけ更新し（判定は UPDATE 文の条件に含めて原子的に
+  行う）、一致しなければ `409 { conflict: true, rows: [最新の行] }` を返す。画面は最新の内容で表示し直し、
+  「◯◯さんが先にこの区画を更新しました（区画累計配布 20 → 35世帯）」と知らせる。エリア担当はエリア内の
+  区画の rev の最大値で判定する。`expected_rev` を送らない場合も、サーバーが読んだ時点の rev で判定するので、
+  同時記録による実績の上書きは起きない。
+- 区画を開いただけでは書き込みは発生しない（以前試した編集ロック方式は、開くたび・延長のたびに書き込みが
+  発生し、無料プランの書き込み上限を圧迫するうえ不具合も出たため取り消した。0013・0014 は欠番）。
 
 ## ユーザーマスタの管理（CSVインポート/エクスポート、管理者限定）
 

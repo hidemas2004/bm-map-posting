@@ -1,7 +1,7 @@
 import { handleLogin, requireAdmin, requireAuth, type AuthEnv } from './auth';
 import { exportUsersCsv, importUsers, listActiveUsers, listUsers, type UsersEnv } from './users';
 import { exportAreasCsv, importAreas, listAreas, listAreasWithCurrentTerm, type AreasEnv } from './areas';
-import { createNewTerm, getTermData, listTerms, type TermsEnv } from './terms';
+import { createNewTerm, getTermData, getTermDataChanges, listTerms, type TermsEnv } from './terms';
 import { recordDistribution, setAreaManager, setAssignee, type RecordsEnv } from './records';
 import { exportActivityLogCsv, listActivityLog, type ActivityLogEnv } from './activity_log';
 import { deleteTerm, type ResetEnv } from './reset';
@@ -94,6 +94,14 @@ async function handle(request: Request, env: Env): Promise<Response> {
 				}
 				return getTermData(env, termId);
 			}
+			if (url.pathname === '/api/term-data/changes' && request.method === 'GET') {
+				const termId = url.searchParams.get('term_id');
+				const since = Number(url.searchParams.get('since') ?? '');
+				if (!termId || !Number.isInteger(since) || since < 0) {
+					return Response.json({ error: 'term_id, since を指定してください' }, { status: 400 });
+				}
+				return getTermDataChanges(env, termId, since);
+			}
 			if (url.pathname === '/api/term/new' && request.method === 'POST') {
 				const admin = await requireAdmin(request, env);
 				if (!admin) {
@@ -170,10 +178,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
 				return queryTracks(env, user, url);
 			}
 			if (url.pathname === '/api/assignee' && request.method === 'POST') {
-				return setAssignee(request, env);
+				return setAssignee(request, env, user);
 			}
 			if (url.pathname === '/api/area-manager' && request.method === 'POST') {
-				return setAreaManager(request, env);
+				return setAreaManager(request, env, user);
 			}
 			if (url.pathname === '/api/term/delete' && request.method === 'POST') {
 				const admin = await requireAdmin(request, env);

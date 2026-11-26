@@ -298,6 +298,8 @@ async function main() {
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0010_gps_tracks_term_id.sql']);
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0011_gps_tracks_distance.sql']);
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0012_term_area_manager.sql']);
+		// 0013・0014（取り消した編集ロック機能）は欠番。migrations/0015_term_data_rev.sql 冒頭のコメント参照
+		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0015_term_data_rev.sql']);
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', `--file=${path.relative(REPO_ROOT, areasSqlPath)}`]);
 		const chomeAreaIdSqlPath = path.join(dir, 'chome_area_id.sql');
 		if (meta.hasChomeBoundary && existsSync(chomeAreaIdSqlPath)) {
