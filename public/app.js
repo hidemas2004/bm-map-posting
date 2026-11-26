@@ -7,6 +7,8 @@ if (!sessionRaw) {
 	throw new Error('not authenticated');
 }
 const session = JSON.parse(sessionRaw);
+// ヘッダにログイン中のユーザー名を表示する（フィルタの右）
+document.getElementById('current-user-name').textContent = session.user?.name ?? '';
 
 // ヘッダのチェックボックス（投票所・コメントフィルタ）・現在地ボタンの表示状態は、
 // バーガーメニュー内リンク（履歴一覧等）へ遷移して戻ってきた際もページがリロードされ

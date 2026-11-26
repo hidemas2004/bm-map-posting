@@ -51,6 +51,11 @@ body.map-page { display: flex; flex-direction: column; overflow: hidden; }
   background: #b45309; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 999px;
 }
 #view-only-badge.show { display: inline-block; }
+/* ログイン中のユーザー名（フィルタの右）。長い名前は省略表示にしてヘッダの行を崩さない */
+#current-user-name {
+  font-size: 13px; color: #e5e7eb; border: 1px solid #4b5563; border-radius: 6px;
+  padding: 3px 8px; white-space: nowrap; max-width: 9em; overflow: hidden; text-overflow: ellipsis;
+}
 
 .header-toggle-hint {
   text-align: center; font-size: 10px; color: #6b7280; line-height: 1;
