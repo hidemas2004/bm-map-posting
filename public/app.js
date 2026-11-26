@@ -812,6 +812,8 @@ function buildPopupContent(row, layer) {
 	const canEditAreaManager = !state.viewOnly && !isZeroHousehold;
 	const canEditAssignee = !state.viewOnly && !isZeroHousehold;
 	const canRecordDistribution = !state.viewOnly && !isZeroHousehold && !isNonTarget;
+	// 「自分が担当する」: ドロップダウンを開かずにワンタップで自分を区画担当にする（すでに自分なら出さない）
+	const canAssignSelf = canEditAssignee && row.assignee_id !== session.user.user_id;
 
 	const areaHouseholds = areaHouseholdsFor(row);
 	const areaDistributed = areaDistributedFor(row);
@@ -830,7 +832,13 @@ function buildPopupContent(row, layer) {
 		${!isZeroHousehold && isNonTarget ? '<p class="zero-household-note">区画担当が未設定のため、配布記録の対象外です。区画担当を設定すると記録できます。</p>' : ''}
 		<div class="assignee-row">
 			<span>区画担当: ${row.assignee_name || '未担当'}</span>
-			${canEditAssignee ? '<button type="button" data-action="edit-assignee">変更する</button>' : ''}
+			${
+				canEditAssignee
+					? `<span class="assignee-actions">${
+							canAssignSelf ? '<button type="button" data-action="assign-self">自分が担当する</button>' : ''
+						}<button type="button" data-action="edit-assignee">変更する</button></span>`
+					: ''
+			}
 		</div>
 		${isZeroHousehold ? '<p class="zero-household-note">世帯数が0のため、エリア担当設定・担当者設定・配布記録の対象外です。</p>' : ''}
 		<div class="row"><span>エリア世帯数:</span><span>${areaHouseholds.toLocaleString('ja-JP')} 世帯</span></div>
@@ -891,6 +899,40 @@ function buildPopupContent(row, layer) {
 		const editButton = container.querySelector('[data-action="edit-assignee"]');
 		editButton.addEventListener('click', () => {
 			layer.setPopupContent(buildAssigneeEditContent(row, layer));
+			layer.getPopup().update();
+		});
+	}
+
+	if (canAssignSelf) {
+		const assignSelfButton = container.querySelector('[data-action="assign-self"]');
+		assignSelfButton.addEventListener('click', async () => {
+			// 他の人が担当している区画を、うっかり横取りしないよう確認する（未担当なら確認なし）
+			if (row.assignee_id && !confirm(`区画担当を「${row.assignee_name}」さんから自分に変更します。よろしいですか？`)) {
+				return;
+			}
+			assignSelfButton.disabled = true;
+			const res = await apiFetch('/api/assignee', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					term_id: state.currentTermId,
+					area_id: row.area_id,
+					assignee_id: session.user.user_id,
+					expected_rev: row.rev ?? 0,
+				}),
+			});
+			const data = await res.json();
+			if (res.status === 409 && data.conflict) {
+				showConflict(layer, row, data);
+				return;
+			}
+			if (!res.ok) {
+				assignSelfButton.disabled = false;
+				alert(data.error ?? '設定に失敗しました');
+				return;
+			}
+			applyRows([data]);
+			layer.setPopupContent(buildPopupContent(data, layer));
 			layer.getPopup().update();
 		});
 	}

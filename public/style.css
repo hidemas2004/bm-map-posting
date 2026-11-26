@@ -181,6 +181,7 @@ body.list-page #header a#back-link {
 .popup-content .row { display: flex; justify-content: space-between; margin: 4px 0; }
 .popup-content .assignee-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0; }
 .popup-content .assignee-row button { font-size: 12px; padding: 2px 8px; cursor: pointer; }
+.popup-content .assignee-actions { display: inline-flex; gap: 4px; flex-shrink: 0; margin-left: 6px; }
 .popup-content .zero-household-note {
   background: #f3f4f6; color: #4b5563; font-size: 12px; padding: 6px 8px; border-radius: 6px; margin: 4px 0;
 }
