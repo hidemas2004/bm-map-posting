@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTownChome, splitCityWard, extractMunicipality, extractChomeBoundary, buildChomeAreaIdUpdateSql } from './estat-boundary.mjs';
+import {
+	parseTownChome,
+	splitCityWard,
+	extractMunicipality,
+	extractChomeBoundary,
+	buildChomeAreaIdUpdateSql,
+	disambiguateDuplicateTownNames,
+	findTownsToAlign,
+} from './estat-boundary.mjs';
 
 function square(x0, y0, x1, y1) {
 	return {
@@ -192,4 +200,113 @@ test('buildChomeAreaIdUpdateSql: SQLエスケープ・警告コメントの付�
 	assert.match(sql, /'chome''A'/);
 	assert.match(sql, /'b''1'/);
 	assert.match(sql, /-- {3}注意: テスト警告/);
+});
+
+function chomeFeature(props) {
+	return { type: 'Feature', properties: { city: '藤沢市', ward: '', chome: '', ...props }, geometry: square(0, 0, 1, 1) };
+}
+
+test('disambiguateDuplicateTownNames: 同じ名前のエリアすべてに末尾3桁を全角括弧で付ける', () => {
+	const features = [
+		chomeFeature({ area_id: '14205410002', town: '大庭' }),
+		chomeFeature({ area_id: '14205410001', town: '大庭' }),
+		chomeFeature({ area_id: '14205801000', town: '長後' }),
+		chomeFeature({ area_id: '14205801001', town: '長後' }),
+	];
+	const { renamed } = disambiguateDuplicateTownNames(features);
+	assert.deepEqual(
+		features.map((f) => f.properties.town),
+		['大庭（002）', '大庭（001）', '長後（000）', '長後（001）'],
+	);
+	assert.deepEqual(renamed[0], { chome_area_id: '14205410001', before: '大庭', after: '大庭（001）' });
+	assert.equal(renamed.length, 4);
+});
+
+test('disambiguateDuplicateTownNames: 名前が1つだけのエリアと、丁目で区別できるエリアは変えない', () => {
+	const features = [
+		chomeFeature({ area_id: '14205601001', town: '亀井野', chome: '1' }),
+		chomeFeature({ area_id: '14205601002', town: '亀井野', chome: '2' }),
+		chomeFeature({ area_id: '14205001000', town: '片瀬' }),
+	];
+	const { renamed } = disambiguateDuplicateTownNames(features);
+	assert.equal(renamed.length, 0);
+	assert.deepEqual(
+		features.map((f) => f.properties.town),
+		['亀井野', '亀井野', '片瀬'],
+	);
+});
+
+test('disambiguateDuplicateTownNames: 2回実行しても結果が同じ', () => {
+	const features = [chomeFeature({ area_id: 'A001', town: '大庭' }), chomeFeature({ area_id: 'A002', town: '大庭' })];
+	disambiguateDuplicateTownNames(features);
+	const { renamed } = disambiguateDuplicateTownNames(features);
+	assert.equal(renamed.length, 0);
+	assert.deepEqual(
+		features.map((f) => f.properties.town),
+		['大庭（001）', '大庭（002）'],
+	);
+});
+
+test('disambiguateDuplicateTownNames: city・wardが違えば同じ名前でも別扱い', () => {
+	const features = [
+		chomeFeature({ area_id: '1001', city: '横浜市', ward: '旭区', town: '本町' }),
+		chomeFeature({ area_id: '2001', city: '横浜市', ward: '青葉区', town: '本町' }),
+		chomeFeature({ area_id: '3001', city: '大和市', town: '本町' }),
+	];
+	const { renamed } = disambiguateDuplicateTownNames(features);
+	assert.equal(renamed.length, 0);
+});
+
+test('extractChomeBoundary: 同じ名前の大字は番号付きの名前で出力し、renamedに記録する', () => {
+	const fc = {
+		type: 'FeatureCollection',
+		features: [
+			feature({ cityName: '藤沢市', keyCode: '14205410001', sName: '大庭', setai: '128' }),
+			feature({ cityName: '藤沢市', keyCode: '14205410006', sName: '大庭', setai: '2149' }),
+			feature({ cityName: '藤沢市', keyCode: '14205601001', sName: '亀井野一丁目', setai: '10' }),
+		],
+	};
+	const { geojson, renamed, warnings } = extractChomeBoundary(fc, '藤沢市');
+	assert.deepEqual(
+		geojson.features.map((f) => f.properties.town),
+		['大庭（001）', '大庭（006）', '亀井野'],
+	);
+	assert.equal(renamed.length, 2);
+	assert.equal(warnings.length, 0);
+});
+
+test('buildChomeAreaIdUpdateSql: townByChomeAreaIdを渡すとエリア単位のtown更新を末尾に出力する', () => {
+	const map = new Map([['b1', '14205410006']]);
+	const sql = buildChomeAreaIdUpdateSql(map, [], new Map([['14205410006', '大庭（006）']]));
+	assert.match(sql, /UPDATE areas SET town = '大庭（006）' WHERE chome_area_id = '14205410006';\n$/);
+	assert.ok(sql.indexOf('SET chome_area_id') < sql.indexOf('SET town'));
+	// 省略時は town の更新を出力しない（従来どおり）
+	assert.doesNotMatch(buildChomeAreaIdUpdateSql(map), /SET town/);
+});
+
+test('findTownsToAlign: 区画のtownに番号を付けた名前がエリアのtownと一致するエリアだけを返す', () => {
+	const blocks = [
+		{ properties: { area_id: 'b1', town: '大庭' } },
+		{ properties: { area_id: 'b2', town: '大庭' } },
+		{ properties: { area_id: 'b3', town: '亀井野' } }, // エリアは丁目付きで番号なし
+		{ properties: { area_id: 'b4', town: '大庭' } }, // 空間結合でフォールバック（エリア無し）
+	];
+	const map = new Map([
+		['b1', '14205410001'],
+		['b2', '14205410006'],
+		['b3', '14205601001'],
+		['b4', 'b4'],
+	]);
+	const chome = [
+		chomeFeature({ area_id: '14205410001', town: '大庭（001）' }),
+		chomeFeature({ area_id: '14205410006', town: '大庭（006）' }),
+		chomeFeature({ area_id: '14205601001', town: '亀井野', chome: '1' }),
+	];
+	assert.deepEqual(
+		[...findTownsToAlign(blocks, map, chome)],
+		[
+			['14205410001', '大庭（001）'],
+			['14205410006', '大庭（006）'],
+		],
+	);
 });

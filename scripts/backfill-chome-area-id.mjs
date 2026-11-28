@@ -23,7 +23,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractMunicipality, buildAreasSql, fetchCityBoundary, fetchChomeBoundary, buildChomeAreaIdUpdateSql } from './lib/estat-boundary.mjs';
+import {
+	extractMunicipality,
+	buildAreasSql,
+	fetchCityBoundary,
+	fetchChomeBoundary,
+	buildChomeAreaIdUpdateSql,
+	disambiguateDuplicateTownNames,
+	findTownsToAlign,
+} from './lib/estat-boundary.mjs';
 import { assignChomeAreaIds } from './lib/geo.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -83,6 +91,13 @@ function main() {
 	const { areas, geojson: blockGeojson, warnings: extractWarnings } = extractMunicipality(featureCollection, CITY_NAME);
 
 	const chomeGeojson = JSON.parse(readFileSync(PUBLIC_CHOME_BOUNDARY_PATH, 'utf8'));
+	// 同じ名前のエリア（丁目のない大字の分割）を番号付きの名前で区別する（issue#42）。番号付け済みなら何も変わらない
+	const { renamed } = disambiguateDuplicateTownNames(chomeGeojson.features);
+	if (renamed.length > 0) {
+		writeFileSync(REGION_CHOME_BOUNDARY_PATH, JSON.stringify(chomeGeojson));
+		writeFileSync(PUBLIC_CHOME_BOUNDARY_PATH, JSON.stringify(chomeGeojson));
+		console.log(`同じ名前のエリア${renamed.length}件に番号を付けました（boundary_chome.geojsonを更新）。`);
+	}
 
 	const { chomeAreaIdByAreaId, warnings: spatialWarnings } = assignChomeAreaIds(blockGeojson.features, chomeGeojson.features);
 
@@ -139,6 +154,12 @@ function main() {
 	for (const a of areas) {
 		a.chome_area_id = chomeAreaIdByAreaId.get(a.area_id) ?? a.area_id;
 	}
+	// --- 番号付きの名前のエリアに属する区画の town を、エリアの名前にそろえる（issue#42） ---
+	const townByChomeAreaId = findTownsToAlign(blockGeojson.features, chomeAreaIdByAreaId, chomeGeojson.features);
+	for (const a of areas) {
+		const town = townByChomeAreaId.get(a.chome_area_id);
+		if (town !== undefined) a.town = town;
+	}
 
 	// --- regions/<region>/areas.sql 再生成 ---
 	const allWarnings = [...extractWarnings, ...spatialWarnings];
@@ -146,7 +167,7 @@ function main() {
 	console.log(`\n${SEED_PATH} を再生成しました（${areas.length}行）。`);
 
 	// --- migrations/backfill_chome_area_id_<region>.sql: 既存DB向けのグループ化UPDATE文 ---
-	writeFileSync(MIGRATION_PATH, buildChomeAreaIdUpdateSql(chomeAreaIdByAreaId, spatialWarnings));
+	writeFileSync(MIGRATION_PATH, buildChomeAreaIdUpdateSql(chomeAreaIdByAreaId, spatialWarnings, townByChomeAreaId));
 	console.log(`${MIGRATION_PATH} を生成しました。migrations/ の連番規則に合わせてリネームしてください。`);
 }
 

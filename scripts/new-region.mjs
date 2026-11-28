@@ -19,7 +19,13 @@ import { fileURLToPath } from 'node:url';
 import { ask, confirm, closePrompt } from './lib/prompt.mjs';
 import { buildCorrectedPollingStationsCsv } from './lib/polling-stations-correction.mjs';
 import { appendEnvBlock, envExists } from './lib/wrangler-jsonc.mjs';
-import { fetchCityBoundary, fetchChomeBoundary, buildChomeAreaIdUpdateSql } from './lib/estat-boundary.mjs';
+import {
+	fetchCityBoundary,
+	fetchChomeBoundary,
+	buildChomeAreaIdUpdateSql,
+	disambiguateDuplicateTownNames,
+	findTownsToAlign,
+} from './lib/estat-boundary.mjs';
 import { assignChomeAreaIds } from './lib/geo.mjs';
 import { computeCenterFromGeoJson } from './lib/geojson-bbox.mjs';
 import { execCommand } from './lib/win-exec.mjs';
@@ -203,7 +209,20 @@ async function main() {
 			console.log('\n--- chome_area_id（エリア）の空間結合 ---');
 			const blockGeojson = JSON.parse(readFileSync(boundaryPath, 'utf8'));
 			const chomeGeojson = JSON.parse(readFileSync(chomeBoundarySourcePath, 'utf8'));
+			// 同じ名前のエリア（丁目のない大字の分割）を番号付きの名前で区別する（issue#42）。fetchChomeBoundaryで
+			// 取得した場合は番号付け済みなので何も変わらない。手で置いたgeojsonや、この対応より前に取得したものにも効かせる。
+			const { renamed } = disambiguateDuplicateTownNames(chomeGeojson.features);
+			if (renamed.length > 0) {
+				writeFileSync(chomeBoundarySourcePath, JSON.stringify(chomeGeojson));
+				writeFileSync(chomeBoundaryDestPath, JSON.stringify(chomeGeojson));
+				console.log(`同じ名前のエリア${renamed.length}件に番号を付けました（boundary_chome.geojsonを更新）。`);
+			}
 			const { chomeAreaIdByAreaId, warnings: spatialWarnings } = assignChomeAreaIds(blockGeojson.features, chomeGeojson.features);
+			const townByChomeAreaId = findTownsToAlign(blockGeojson.features, chomeAreaIdByAreaId, chomeGeojson.features);
+			if (townByChomeAreaId.size > 0) {
+				console.log(`番号付きの名前のエリア${townByChomeAreaId.size}件について、区画の名前もそろえます（chome_area_id.sql）:`);
+				for (const [id, town] of townByChomeAreaId) console.log(`  ${id}: ${town}`);
+			}
 
 			if (spatialWarnings.length > 0) {
 				console.warn(`空間結合の警告が${spatialWarnings.length}件あります:`);
@@ -220,7 +239,7 @@ async function main() {
 				console.log('空間結合の警告はありませんでした（全区画が1つのエリアに一致）。');
 			}
 
-			writeFileSync(chomeAreaIdSqlPath, buildChomeAreaIdUpdateSql(chomeAreaIdByAreaId, spatialWarnings));
+			writeFileSync(chomeAreaIdSqlPath, buildChomeAreaIdUpdateSql(chomeAreaIdByAreaId, spatialWarnings, townByChomeAreaId));
 			chomeWarnings = [...chomeWarnings, ...spatialWarnings];
 		}
 	}
@@ -300,6 +319,8 @@ async function main() {
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0012_term_area_manager.sql']);
 		// 0013・0014（取り消した編集ロック機能）は欠番。migrations/0015_term_data_rev.sql 冒頭のコメント参照
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', '--file=migrations/0015_term_data_rev.sql']);
+		// 0016（同じ名前のエリアの番号付け）は藤沢市の既存データ専用。新しい地域は chome_area_id.sql に含まれる
+		// town の更新で同じ結果になるため適用しない（issue#42）
 		run(NPX, ['wrangler', 'd1', 'execute', d1DatabaseName, '--env', regionId, '--remote', '--yes', `--file=${path.relative(REPO_ROOT, areasSqlPath)}`]);
 		const chomeAreaIdSqlPath = path.join(dir, 'chome_area_id.sql');
 		if (meta.hasChomeBoundary && existsSync(chomeAreaIdSqlPath)) {

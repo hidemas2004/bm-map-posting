@@ -289,6 +289,39 @@ export function fetchCityBoundary({ cityCode, cityName, outDir }) {
 	return { areas, warnings, outDir };
 }
 
+/**
+ * 同じ地域（city+ward）の中で town+chome が同じ「エリア」が2つ以上ある場合、そのすべての town を
+ * `大字名（area_idの末尾3桁）` に変える（issue#42）。丁目のない大字（藤沢市の大庭・遠藤など）では、
+ * e-Statが1つの大字を複数のKEY_CODEに分割しているのにS_NAMEには大字名しか入っておらず、画面上で
+ * 区別できないため。番号はe-Statの字・丁目コードで、小字名などの意味はない。名前は表示専用で、
+ * データの識別は従来どおり area_id / chome_area_id で行う。
+ * 名前が1つしかないエリアは変えない。一度変えた名前は重複しなくなるため、繰り返し実行しても結果は同じ。
+ * features（boundary_chome.geojsonのFeature配列）の properties.town をその場で書き換える。
+ * @returns {{ features: object[], renamed: { chome_area_id: string, before: string, after: string }[] }}
+ *   renamed は area_id 昇順
+ */
+export function disambiguateDuplicateTownNames(features) {
+	const groups = new Map();
+	for (const f of features) {
+		const p = f.properties;
+		const key = JSON.stringify([p.city ?? '', p.ward ?? '', p.town ?? '', p.chome ?? '']);
+		if (!groups.has(key)) groups.set(key, []);
+		groups.get(key).push(f);
+	}
+	const renamed = [];
+	for (const group of groups.values()) {
+		if (group.length <= 1) continue;
+		for (const f of group) {
+			const before = f.properties.town;
+			const after = `${before}（${String(f.properties.area_id).slice(-3)}）`;
+			f.properties.town = after;
+			renamed.push({ chome_area_id: f.properties.area_id, before, after });
+		}
+	}
+	renamed.sort((a, b) => a.chome_area_id.localeCompare(b.chome_area_id));
+	return { features, renamed };
+}
+
 /** 与えられた町丁・字等境界データ（都道府県単位ダウンロードのため、対象市区町村以外のフィーチャが
  *  大量に混在する）から、指定CITY_NAMEの「エリア」境界を抽出する。フィーチャ抽出・丁目パース・
  *  MultiPolygon統合ロジックはextractMunicipality()を再利用し、出力プロパティのみ
@@ -303,6 +336,8 @@ export function extractChomeBoundary(featureCollection, cityName) {
 		properties: { area_id: a.area_id, city: a.city, ward: a.ward, town: a.town, chome: a.chome, num_households: a.num_households },
 		geometry: geometryByAreaId.get(a.area_id),
 	}));
+	// 丁目のない大字が複数のKEY_CODEに分割されている場合に、同じ名前のエリアを番号付きの名前で区別する（issue#42）
+	const { renamed } = disambiguateDuplicateTownNames(features);
 
 	// 全エリアの世帯数が0の場合、e-Stat側のSETAI列の想定違い（列名変更等）の可能性が高い。
 	// extractMunicipalityは1エリアずつ「世帯数0」を警告する設計だが、全滅時は個別警告が
@@ -315,7 +350,7 @@ export function extractChomeBoundary(featureCollection, cityName) {
 			]
 		: warnings;
 
-	return { geojson: { type: 'FeatureCollection', features }, warnings: chomeWarnings };
+	return { geojson: { type: 'FeatureCollection', features }, warnings: chomeWarnings, renamed };
 }
 
 /**
@@ -338,12 +373,12 @@ export function fetchChomeBoundary({ cityCode, cityName, outDir }) {
 	}
 
 	const featureCollection = JSON.parse(readFileSync(geojsonPath, 'utf8'));
-	const { geojson, warnings } = extractChomeBoundary(featureCollection, cityName);
+	const { geojson, warnings, renamed } = extractChomeBoundary(featureCollection, cityName);
 
 	mkdirSync(outDir, { recursive: true });
 	writeFileSync(path.join(outDir, 'boundary_chome.geojson'), JSON.stringify(geojson));
 
-	return { geojson, warnings, outDir };
+	return { geojson, warnings, renamed, outDir };
 }
 
 /** 区画（基本単位区）ごとのchome_area_id（scripts/lib/geo.mjsのassignChomeAreaIdsが算出したもの）を
@@ -352,8 +387,11 @@ export function fetchChomeBoundary({ cityCode, cityName, outDir }) {
  *  scripts/backfill-chome-area-id.mjsの両方から共有される。
  * @param {Map<string,string>} chomeAreaIdByAreaId area_id -> chome_area_id
  * @param {string[]} warnings 空間結合時の警告（コメントとして出力SQLの先頭に残す）
+ * @param {Map<string,string>} [townByChomeAreaId] chome_area_id -> town。渡したエリアについて、属する
+ *   全区画の town をその名前に揃えるUPDATE文を末尾に追加する（disambiguateDuplicateTownNamesで
+ *   番号付きの名前にしたエリア用。issue#42）。
  */
-export function buildChomeAreaIdUpdateSql(chomeAreaIdByAreaId, warnings = []) {
+export function buildChomeAreaIdUpdateSql(chomeAreaIdByAreaId, warnings = [], townByChomeAreaId = new Map()) {
 	const groups = new Map(); // chome_area_id -> area_id[]
 	for (const [areaId, chomeAreaId] of chomeAreaIdByAreaId) {
 		if (!groups.has(chomeAreaId)) groups.set(chomeAreaId, []);
@@ -375,5 +413,41 @@ export function buildChomeAreaIdUpdateSql(chomeAreaIdByAreaId, warnings = []) {
 			lines.push(`UPDATE areas SET chome_area_id = '${escapeSql(chomeAreaId)}' WHERE area_id IN (${list});`);
 		}
 	}
+	lines.push(...buildTownUpdateLines(townByChomeAreaId));
 	return lines.join('\n') + '\n';
+}
+
+/** 区画（基本単位区）の town を、属するエリアの番号付きの名前（disambiguateDuplicateTownNames参照）に
+ *  揃える必要があるエリアを求める。区画の town に `（エリアのarea_id末尾3桁）` を付けた名前がエリアの
+ *  town と一致する場合だけを対象にする（それ以外の名前の食い違いには手を出さない）。
+ *  空間結合で自分自身のarea_idにフォールバックした区画は、対応するエリアが無いので対象外。
+ * @param {object[]} blockFeatures boundary.geojson（区画）のFeature配列
+ * @param {Map<string,string>} chomeAreaIdByAreaId area_id -> chome_area_id
+ * @param {object[]} chomeFeatures boundary_chome.geojson（番号付け後）のFeature配列
+ * @returns {Map<string,string>} chome_area_id -> town
+ */
+export function findTownsToAlign(blockFeatures, chomeAreaIdByAreaId, chomeFeatures) {
+	const chomeTownById = new Map(chomeFeatures.map((f) => [f.properties.area_id, f.properties.town]));
+	const result = new Map();
+	for (const f of blockFeatures) {
+		const chomeAreaId = chomeAreaIdByAreaId.get(f.properties.area_id);
+		const chomeTown = chomeTownById.get(chomeAreaId);
+		if (chomeTown === undefined) continue;
+		if (chomeTown === `${f.properties.town}（${String(chomeAreaId).slice(-3)}）`) result.set(chomeAreaId, chomeTown);
+	}
+	return result;
+}
+
+/** chome_area_id -> town の対応から、エリアに属する全区画の town を揃えるUPDATE文（コメント付き）を
+ *  生成する。対応が空なら空配列。buildChomeAreaIdUpdateSql と scripts/disambiguate-town-names.mjs が使う。 */
+export function buildTownUpdateLines(townByChomeAreaId) {
+	if (townByChomeAreaId.size === 0) return [];
+	const lines = [
+		'-- 同じ名前のエリア（丁目のない大字の分割）を番号付きの名前で区別する（issue#42。',
+		'--   scripts/lib/estat-boundary.mjs disambiguateDuplicateTownNames 参照）。',
+	];
+	for (const [chomeAreaId, town] of [...townByChomeAreaId.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+		lines.push(`UPDATE areas SET town = '${escapeSql(town)}' WHERE chome_area_id = '${escapeSql(chomeAreaId)}';`);
+	}
+	return lines;
 }
