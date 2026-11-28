@@ -10,6 +10,7 @@
     "new-region": "node scripts/new-region.mjs",
     "fetch-boundary-data": "node scripts/fetch-boundary-data.mjs",
     "backfill-chome-area-id": "node scripts/backfill-chome-area-id.mjs",
+    "disambiguate-town-names": "node scripts/disambiguate-town-names.mjs",
     "upload-polling-stations": "node scripts/upload-polling-stations.mjs",
     "export-polling-stations": "node scripts/export-polling-stations.mjs"
   },

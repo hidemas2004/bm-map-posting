@@ -14,8 +14,12 @@
   として例外的に存在する。データ上は `areas` テーブルの
   `chome_area_id`（`boundary_chome.geojson`の各境界ポリゴンが持つe-Stat KEY_CODEをそのまま転用したもの）
   で識別される。区画がどの境界ポリゴンに
-  属するかは空間結合（`scripts/lib/geo.mjs`）で算出する。「エリア担当」（`term_data.area_manager_id` /
-  `area_manager_name`。ターム単位で、同一エリア内の全区画行に同じ値を複製して持つ）はこの単位で設定する。
+  属するかは空間結合（`scripts/lib/geo.mjs`）で算出する。
+  丁目のない大字はe-Statで複数のKEY_CODEに分割されていても名前（S_NAME）が同じなので、同じ地域内で
+  `town`+`chome` が重複するエリアは、区画も含めて `town` を `大庭（006）` のように「大字名（KEY_CODE末尾3桁）」に
+  している（issue#42。表示専用で、識別は従来どおりID。規則は`scripts/lib/estat-boundary.mjs`の
+  `disambiguateDuplicateTownNames`、既存地域への反映は`scripts/disambiguate-town-names.mjs`）。
+  「エリア担当」（`term_data.area_manager_id` / `area_manager_name`。ターム単位で、同一エリア内の全区画行に同じ値を複製して持つ）はこの単位で設定する。
   （旧仕様では`areas.area_manager_*`に全ターム共通で1つだけ持っていた。`migrations/0012_term_area_manager.sql`
   で移行済みで、`areas`側の列は参照しない残置列）
   （旧仕様: `town` + `chome` の文字列組で識別していたが、e-Statが同一町名を複数KEY_CODEに分割している
